@@ -1,0 +1,25 @@
+import Development.Shake
+
+opts = shakeOptions { shakeFiles    = ".shake/"
+                    , shakeVersion  = "1.0"
+                    , shakeThreads  = 32
+                    -- , shakeReport   = Just "profile.html"
+                    , shakeProgress = progressSimple
+                    }
+
+main :: IO ()
+main = shakeArgs opts $ do
+    want ["install","test"]
+
+    "install" ~> cmd "cabal" ["install", "--ghcjs"]
+    "test" ~> do
+        need ["install"]
+        cmd "cp" ["-R", "dist/build/ghcjs-websockets-test/ghcjs-websockets-test.jsexe", "/home/justin/public_html"]
+
+    "clean" ~> removeFilesAfter ".shake" ["//*"]
+
+    -- phony "" $ do
+    --   need []
+
+    -- "" *> \_ -> do
+    --   cmd "" []

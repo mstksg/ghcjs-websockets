@@ -1,0 +1,5 @@
+.cabal-sandbox
+.shake
+dist
+node_modules
+
