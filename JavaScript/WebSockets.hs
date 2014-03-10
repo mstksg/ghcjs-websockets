@@ -1,19 +1,21 @@
-{-# LANGUAGE ForeignFunctionInterface #-}
-{-# LANGUAGE JavaScriptFFI #-}
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module JavaScript.WebSockets where
 
 import Control.Applicative
+import Unsafe.Coerce
 import Control.Concurrent
 import Control.Monad
+import Data.Text.Encoding
 import Control.Monad.IO.Class
-import Data.Text               (Text)
+import Data.ByteString.Lazy
+import Data.Binary
+import Data.Text                      (Text)
 import GHCJS.Foreign
 import GHCJS.Types
-import qualified GHCJS.Foreign as F
+import JavaScript.Blob
+import JavaScript.WebSockets.Internal
 
 data NodeClient_
 
@@ -24,51 +26,8 @@ data Socket = Socket { socketConnection :: Connection
                      , socketWaiters    :: SocketWaiters
                      }
 
-data Connection_
-type Connection = JSRef Connection_
 
-data Waiter_
-type Waiter = JSRef Waiter_
-
-type SocketQueue = JSArray Text
-type SocketWaiters = JSArray Waiter
-
-foreign import javascript unsafe "var ws = new WebSocket($1); ws.onmessage = function (e) { console.log(e); };" testSocket :: JSString -> IO ()
-
-foreign import javascript unsafe "$1.close();" closeSocket :: Connection -> IO ()
-foreign import javascript unsafe "$1.send($2)" socketSend :: Connection -> JSString -> IO ()
-foreign import javascript interruptible "$1.onopen = function() { $c(); };" socketWait :: Connection -> IO ()
-
-foreign import javascript interruptible  "var q = [];\
-                                          var w = [];\
-                                          var ws = new WebSocket($1);\
-                                          ws.onmessage = function(e) {\
-                                            console.log(e);\
-                                            if (!(typeof e === 'undefined')) {\
-                                              if (w.length > 0) {\
-                                                var w0 = w.shift();\
-                                                w0(e.data);\
-                                              } else {\
-                                                q.push(e.data);\
-                                              }\
-                                            }\
-                                          };\
-                                          ws.onopen = function() {\
-                                            $c({ conn: ws, queue: q, waiters: w });\
-                                          };"
-  newSocket :: JSString -> IO (JSRef qw)
-
-foreign import javascript interruptible  "if ($1.length > 0) {\
-                                            var d = $1.shift();\
-                                            $c(d);\
-                                          } else {\
-                                            $2.push( function(d) {\
-                                              $c(d);\
-                                            });\
-                                          }"
-  awaitMessage :: SocketQueue -> SocketWaiters -> IO JSString
-
-data SocketProcess a = ProcessExpect (Text -> SocketProcess a)
+data SocketProcess a = ProcessExpect (ByteString -> SocketProcess a)
                      | ProcessSend Text (SocketProcess a)
                      | ProcessIO (IO (SocketProcess a))
                      | ProcessPure a
@@ -90,16 +49,31 @@ instance Functor SocketProcess where
 instance MonadIO SocketProcess where
     liftIO io = ProcessIO (return <$> io)
 
-expect :: SocketProcess Text
-expect = ProcessExpect ProcessPure
+expectBS :: SocketProcess ByteString
+expectBS = ProcessExpect return
+
+expect :: Binary a => SocketProcess a
+expect = ProcessExpect (return . decode)
 
 send :: Text -> SocketProcess ()
 send t = ProcessSend t (return ())
 
+awaitMessage :: Socket -> IO ByteString
+awaitMessage (Socket _ q w) = do
+    msg <- js_await q w
+    blb <- isBlob msg
+    if blb
+      then do
+        let blob = unsafeCoerce msg
+        fromStrict <$> readBlob blob
+      else do
+        let blob = unsafeCoerce msg :: JSString
+        return (fromStrict . encodeUtf8 . fromJSString $ blob)
+
+
 runSocketProcess :: Socket -> SocketProcess a -> IO a
 runSocketProcess sock (ProcessExpect f) = do
-    msg <- fromJSString <$> awaitMessage (socketQueue sock) (socketWaiters sock)
-    -- threadDelay 1000000
+    msg <- awaitMessage sock
     runSocketProcess sock (f msg)
 runSocketProcess sock (ProcessSend s p) = do
     socketSend (socketConnection sock) (toJSString s)
@@ -111,9 +85,9 @@ withConn :: Text -> SocketProcess () -> IO ()
 withConn url process = do
     sockobj <- newSocket (toJSString url)
 
-    conn <- F.getProp ("conn"::Text) sockobj
-    queue <- F.getProp ("queue"::Text) sockobj
-    waiters <- F.getProp ("waiters"::Text) sockobj
+    conn <- getProp ("conn"::Text) sockobj
+    queue <- getProp ("queue"::Text) sockobj
+    waiters <- getProp ("waiters"::Text) sockobj
     let sock = Socket conn queue waiters
 
     runSocketProcess sock process
