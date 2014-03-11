@@ -4,63 +4,83 @@
 module JavaScript.WebSockets where
 
 import Control.Applicative
-import Unsafe.Coerce
 import Control.Concurrent
 import Control.Monad
-import Data.Text.Encoding
 import Control.Monad.IO.Class
-import Data.ByteString.Lazy
+import Control.Spoon
 import Data.Binary
+import Data.ByteString.Lazy
 import Data.Text                      (Text)
+import Data.Text.Encoding
+import Data.Typeable                  as DT
+import Data.Typeable.Internal         as DT
 import GHCJS.Foreign
 import GHCJS.Types
+import Data.Typeable.FingerprintRep
 import JavaScript.Blob
 import JavaScript.WebSockets.Internal
+import Unsafe.Coerce
 
 data NodeClient_
 
 type NodeClient = JSRef NodeClient_
 
-data Socket = Socket { socketConnection :: Connection
-                     , socketQueue      :: SocketQueue
-                     , socketWaiters    :: SocketWaiters
-                     }
+data Connection = Connection { connSocket :: Socket
+                             , connQueue      :: ConnectionQueue
+                             , connWaiters    :: ConnectionWaiters
+                             }
 
 
-data SocketProcess a = ProcessExpect (ByteString -> SocketProcess a)
-                     | ProcessSend Text (SocketProcess a)
-                     | ProcessIO (IO (SocketProcess a))
-                     | ProcessPure a
+data ConnectionProcess a = ProcessExpect (ByteString -> ConnectionProcess a)
+                         | ProcessSend Text (ConnectionProcess a)
+                         | ProcessIO (IO (ConnectionProcess a))
+                         | ProcessPure a
 
-instance Monad SocketProcess where
+instance Monad ConnectionProcess where
     return    = ProcessPure
     (ProcessExpect e) >>= f = ProcessExpect $ \t -> e t >>= f
     (ProcessSend s p) >>= f = ProcessSend s $ p >>= f
     (ProcessIO io)    >>= f = ProcessIO     $ fmap (>>= f) io
     (ProcessPure a)   >>= f = f a
 
-instance Applicative SocketProcess where
+instance Applicative ConnectionProcess where
     pure = return
     (<*>) = ap
 
-instance Functor SocketProcess where
+instance Functor ConnectionProcess where
     fmap f s = pure f <*> s
 
-instance MonadIO SocketProcess where
+instance MonadIO ConnectionProcess where
     liftIO io = ProcessIO (return <$> io)
 
-expectBS :: SocketProcess ByteString
+expectBS :: ConnectionProcess ByteString
 expectBS = ProcessExpect return
 
-expect :: Binary a => SocketProcess a
-expect = ProcessExpect (return . decode)
+expectMaybe :: Binary a => ConnectionProcess (Maybe a)
+expectMaybe = do
+  bs <- expectBS
+  return (teaspoon $ decode bs)
 
-send :: Text -> SocketProcess ()
+expect :: Binary a => ConnectionProcess a
+expect = do
+  res <- expectMaybe
+  case res of
+    Just res' -> return res'
+    Nothing   -> expect
+
+expectAsType :: (Binary a, Typeable a) => ConnectionProcess a
+expectAsType = do
+  (fp,res) <- expect
+  if fp == fingerprintRep res
+    then return res
+    else expectAsType
+
+send :: Text -> ConnectionProcess ()
 send t = ProcessSend t (return ())
 
-awaitMessage :: Socket -> IO ByteString
-awaitMessage (Socket _ q w) = do
-    msg <- js_await q w
+awaitMessage :: Connection -> IO ByteString
+awaitMessage (Connection _ q w) = do
+    msg <- ws_awaitConn q w
     blb <- isBlob msg
     if blb
       then do
@@ -71,26 +91,29 @@ awaitMessage (Socket _ q w) = do
         return (fromStrict . encodeUtf8 . fromJSString $ blob)
 
 
-runSocketProcess :: Socket -> SocketProcess a -> IO a
-runSocketProcess sock (ProcessExpect f) = do
-    msg <- awaitMessage sock
-    runSocketProcess sock (f msg)
-runSocketProcess sock (ProcessSend s p) = do
-    socketSend (socketConnection sock) (toJSString s)
-    runSocketProcess sock p
-runSocketProcess sock (ProcessIO io)    = io >>= runSocketProcess sock
-runSocketProcess sock (ProcessPure x)   = return x
+runConnectionProcess :: Connection -> ConnectionProcess a -> IO a
+runConnectionProcess conn (ProcessExpect f) = do
+    msg <- awaitMessage conn
+    runConnectionProcess conn (f msg)
+runConnectionProcess conn (ProcessSend s p) = do
+    ws_socketSend (connSocket conn) (toJSString s)
+    runConnectionProcess conn p
+runConnectionProcess conn (ProcessIO io)    = io >>= runConnectionProcess conn
+runConnectionProcess conn (ProcessPure x)   = return x
 
-withConn :: Text -> SocketProcess () -> IO ()
+closeConnection :: Connection -> IO ()
+closeConnection (Connection s _ _) = ws_closeSocket s
+
+withConn :: Text -> ConnectionProcess () -> IO ()
 withConn url process = do
-    sockobj <- newSocket (toJSString url)
+    sockobj <- ws_newSocket (toJSString url)
 
-    conn <- getProp ("conn"::Text) sockobj
+    socket <- getProp ("conn"::Text) sockobj
     queue <- getProp ("queue"::Text) sockobj
     waiters <- getProp ("waiters"::Text) sockobj
-    let sock = Socket conn queue waiters
+    let conn = Connection socket queue waiters
 
-    runSocketProcess sock process
+    runConnectionProcess conn process
 
-    closeSocket conn
+    closeConnection conn
     return ()
