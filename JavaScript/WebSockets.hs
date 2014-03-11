@@ -16,7 +16,8 @@ import Data.Typeable                  as DT
 import Data.Typeable.Internal         as DT
 import GHCJS.Foreign
 import GHCJS.Types
-import Data.Typeable.FingerprintRep
+-- import Data.Typeable.FingerprintRep
+import Data.Binary.Tagged
 import JavaScript.Blob
 import JavaScript.WebSockets.Internal
 import Unsafe.Coerce
@@ -56,10 +57,13 @@ instance MonadIO ConnectionProcess where
 expectBS :: ConnectionProcess ByteString
 expectBS = ProcessExpect return
 
-expectMaybe :: Binary a => ConnectionProcess (Maybe a)
-expectMaybe = do
+expectEither :: Binary a => ConnectionProcess (Either ByteString a)
+expectEither = do
   bs <- expectBS
-  return (teaspoon $ decode bs)
+  return $ maybe (Left bs) Right . teaspoon . decode $ bs
+
+expectMaybe :: Binary a => ConnectionProcess (Maybe a)
+expectMaybe = either (const Nothing) (Just) <$> expectEither
 
 expect :: Binary a => ConnectionProcess a
 expect = do
@@ -68,12 +72,19 @@ expect = do
     Just res' -> return res'
     Nothing   -> expect
 
-expectAsType :: (Binary a, Typeable a) => ConnectionProcess a
-expectAsType = do
-  (fp,res) <- expect
-  if fp == fingerprintRep res
-    then return res
-    else expectAsType
+expectTagged :: (Binary a, Typeable a) => ConnectionProcess a
+expectTagged = do
+  tagged <- expect
+  case getTagged tagged of
+    Just x -> return x
+    Nothing -> expectTagged
+
+-- expectAsType :: (Binary a, Typeable a) => ConnectionProcess a
+-- expectAsType = do
+--   (fp,res) <- expect
+--   if fp == fingerprintRep res
+--     then return res
+--     else expectAsType
 
 send :: Text -> ConnectionProcess ()
 send t = ProcessSend t (return ())
@@ -90,30 +101,31 @@ awaitMessage (Connection _ q w) = do
         let blob = unsafeCoerce msg :: JSString
         return (fromStrict . encodeUtf8 . fromJSString $ blob)
 
-
-runConnectionProcess :: Connection -> ConnectionProcess a -> IO a
-runConnectionProcess conn (ProcessExpect f) = do
+withConn :: Connection -> ConnectionProcess a -> IO a
+withConn conn (ProcessExpect f) = do
     msg <- awaitMessage conn
-    runConnectionProcess conn (f msg)
-runConnectionProcess conn (ProcessSend s p) = do
+    withConn conn (f msg)
+withConn conn (ProcessSend s p) = do
     ws_socketSend (connSocket conn) (toJSString s)
-    runConnectionProcess conn p
-runConnectionProcess conn (ProcessIO io)    = io >>= runConnectionProcess conn
-runConnectionProcess conn (ProcessPure x)   = return x
+    withConn conn p
+withConn conn (ProcessIO io)    = io >>= withConn conn
+withConn conn (ProcessPure x)   = return x
 
 closeConnection :: Connection -> IO ()
 closeConnection (Connection s _ _) = ws_closeSocket s
 
-withConn :: Text -> ConnectionProcess () -> IO ()
-withConn url process = do
-    sockobj <- ws_newSocket (toJSString url)
+openConnection :: Text -> IO Connection
+openConnection url = do
+    queue <- newArray
+    waiters <- newArray
+    socket <- ws_newSocket (toJSString url) queue waiters
+    return $ Connection socket queue waiters
 
-    socket <- getProp ("conn"::Text) sockobj
-    queue <- getProp ("queue"::Text) sockobj
-    waiters <- getProp ("waiters"::Text) sockobj
-    let conn = Connection socket queue waiters
+withUrl :: Text -> ConnectionProcess a -> IO a
+withUrl url process = do
+    conn <- openConnection url
 
-    runConnectionProcess conn process
+    res <- withConn conn process
 
     closeConnection conn
-    return ()
+    return res

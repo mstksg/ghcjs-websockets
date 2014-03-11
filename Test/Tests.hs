@@ -22,7 +22,7 @@ data BTree a = Empty | Node a (BTree a) (BTree a) deriving (Show, Typeable, Gene
 instance Binary a => Binary (BTree a)
 
 main :: IO ()
-main = withConn "my-server" ptest
+main = withUrl "server" ptest
 
 ptest :: ConnectionProcess ()
 ptest = do
