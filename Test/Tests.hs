@@ -32,10 +32,10 @@ ptest = do
   liftIO $ print k
   e <- expect
   liftIO $ T.putStrLn (T.decodeUtf8 e)
-  send "hello again"
-  send "how are you"
-  send "does this work?"
-  send "yes!"
+  sendText "hello again"
+  sendText "how are you"
+  sendText "does this work?"
+  sendText "yes!"
   forever $ do
     liftIO $ putStrLn "waiting for input:"
     e  <- expect :: ConnectionProcess (BTree Int)

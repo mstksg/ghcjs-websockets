@@ -1,75 +1,100 @@
 {-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE IncoherentInstances #-}
 
-module JavaScript.WebSockets where
+module JavaScript.WebSockets (
+    -- * Types and Classes
+    Connection          -- abstract
+  , ConnectionProcess   -- abstract, instance: Functor, Applicative, Monad, MonadIO
+  , Sendable
+    -- * Opening, closing, running connections
+  , withUrl             -- :: Text -> ConnectionProcess a -> IO a
+  , withConn            -- :: Connection -> ConnectionProcess a -> IO a
+  , openConnection      -- :: Text -> IO Connection
+  , closeConnection     -- :: Connection -> IO ()
+    -- * Sending messages
+  , sendText            -- :: Text -> ConnectionProcess ()
+  , sendBinary          -- :: Binary a => a -> ConnectionProcess ()
+  , send                -- :: Sendable a => a -> ConnectionProcess ()
+  , sendTagged          -- :: (Binary a, Typeable a) => ConnectionProcess ()
+    -- * Receiving messages
+  , expectText          -- :: ConnectionProcess Text
+  , expectBS            -- :: ConnectionProcess ByteString
+  , expectEither        -- :: Binary a => ConnectionProcess (Either ByteString a)
+  , expectMaybe         -- :: Binary a => ConnectionProcess (Maybe a)
+  , expect              -- :: Binary a => ConnectionProcess a
+  , expectTagged        -- :: (Binary a, Typeable a) => ConnectionProcess a
+    -- * Inspecting connections
+  , selfConn            -- :: ConnectionProcess Connection
+  , connOrigin          -- :: Connection -> Text
+  ) where
 
-import Control.Applicative
-import Control.Concurrent
-import Data.Default
-import Data.Maybe (fromMaybe)
-import Control.Monad
-import Control.Monad.IO.Class
-import Control.Spoon
-import Data.Binary
+import Control.Applicative            ((<$>))
+import Control.Exception              (bracket)
+import Control.Spoon                  (teaspoon)
+import Data.Binary                    (Binary, encode, decode)
 import Data.Binary.Tagged
-import Data.ByteString.Lazy
-import Data.IORef
-import Data.Map.Strict                (Map)
-import Data.Sequence                  as S
+import Data.ByteString.Lazy           (ByteString, fromStrict)
+import Data.Foldable                  (mapM_)
 import Data.Text                      (Text)
-import Data.Text.Encoding
+import Data.Text.Encoding             (encodeUtf8, decodeUtf8)
 import Data.Typeable                  as DT
-import Debug.Trace
-import GHCJS.Foreign
-import GHCJS.Types
-import JavaScript.Blob
 import JavaScript.WebSockets.Internal
-import Prelude                        as P
-import Unsafe.Coerce
-import qualified Data.Map.Strict      as M
+import Prelude hiding                 (mapM_)
 
-data Connection = Connection { connSocket     :: Socket
-                             , connQueue      :: ConnectionQueue
-                             , connWaiters    :: ConnectionWaiters
-                             , connTypeQueues :: IORef (Map TagFingerprint (Seq ByteString))
-                             }
+-- | 'Sendable' basically adds a convenient but not exactly necessary layer
+-- of abstraction over 'sendText' and 'sendBinary'.  You can send both
+-- 'Text' and 'Binary' instances using 'send'.  You really should never
+-- have to define your own instances.
+class Sendable s where
+    encodeSendable :: s -> ByteString
 
+instance Sendable Text where
+    encodeSendable = fromStrict . encodeUtf8
 
-data ConnectionProcess a = ProcessExpect (ByteString -> ConnectionProcess a)
-                         | ProcessSend Text (ConnectionProcess a)
-                         | ProcessRead (Connection -> ConnectionProcess a)
-                         | ProcessIO (IO (ConnectionProcess a))
-                         | ProcessPure a
+instance Binary a => Sendable a where
+    encodeSendable = encode
 
-instance Monad ConnectionProcess where
-    return    = ProcessPure
-    (ProcessExpect e)   >>= f = ProcessExpect $ \t -> e t >>= f
-    (ProcessSend s p)   >>= f = ProcessSend s $ p >>= f
-    (ProcessRead p)     >>= f = ProcessRead   $ \c -> p c >>= f
-    (ProcessIO io)      >>= f = ProcessIO     $ fmap (>>= f) io
-    (ProcessPure a)     >>= f = f a
+-- | Make a connection to the websocket server given by the url and
+-- execute/run a 'ConnectionProcess' process/computation with that
+-- connection.  Handles the closing and stuff for you.
+withUrl :: Text -> ConnectionProcess a -> IO a
+withUrl url process = do
+    bracket
+      (openConnection url)
+      (closeConnection)
+      (flip withConn process)
 
-instance Applicative ConnectionProcess where
-    pure = return
-    (<*>) = ap
+-- | Send strict 'Text' through the connection.
+sendText :: Text -> ConnectionProcess ()
+sendText = send
 
-instance Functor ConnectionProcess where
-    fmap f s = pure f <*> s
+-- | Send an instance of 'Binary' through the connection.  It will be
+-- serialized using 'encode' before being sent.
+sendBinary :: Binary a => a -> ConnectionProcess ()
+sendBinary = send
 
-instance MonadIO ConnectionProcess where
-    liftIO io = ProcessIO (return <$> io)
+-- | Send a lazy 'ByteString' through the connection.
+sendBS :: ByteString -> ConnectionProcess ()
+sendBS bs = ProcessSend bs (return ())
 
-withConn :: Connection -> ConnectionProcess a -> IO a
-withConn conn (ProcessExpect p)  = do
-    msg <- awaitMessage conn
-    withConn conn (p msg)
-withConn conn (ProcessSend s p)  = do
-    ws_socketSend (connSocket conn) (toJSString s)
-    withConn conn p
-withConn conn (ProcessRead p)    = withConn conn (p conn)
-withConn conn (ProcessIO io)     = io >>= withConn conn
-withConn conn (ProcessPure x)    = return x
+-- | Send data tagged with 'Data.Binary.Tagged' --- basically, send the
+-- serialized data tagged with information about its type.  See
+-- 'Data.Binary.Tagged' in the tagged-binary package for more information.
+-- Allows you to treat the channel as a polymorphic dynamic communication
+-- channel, and the server can chose to accept, ignore, or queue the
+-- message based on its type.
+sendTagged :: (Binary a, Typeable a) => a -> ConnectionProcess ()
+sendTagged = sendBS . encodeTagged
+
+-- | Send a 'Sendable' instance --- either 'Text' or an instance of
+-- 'Binary'.  Mostly a convenience function abstracting over 'sendText' and
+-- 'sendBinary'.
+send :: Sendable s => s -> ConnectionProcess ()
+send = sendBS . encodeSendable
 
 expectBS :: ConnectionProcess ByteString
 expectBS = ProcessExpect return
@@ -85,8 +110,7 @@ expectMaybe = do
   case expected of
     Right x -> return (Just x)
     Left bs -> do
-      let fpIn = fromMaybe def (bsFingerprint bs)
-      queueUpFp fpIn bs
+      mapM_ (flip queueUpFp bs) (bsFingerprint bs)
       return Nothing
 
 expect :: Binary a => ConnectionProcess a
@@ -96,11 +120,14 @@ expect = do
     Just res' -> return res'
     Nothing   -> expect
 
+expectText :: ConnectionProcess Text
+expectText = decodeUtf8 <$> expect
+
 expectTagged :: forall a. (Binary a, Typeable a) => ConnectionProcess a
 expectTagged = do
   -- check queue first
   let fp = typeFingerprint (undefined :: a)
-  queued <- popQueue fp
+  queued <- popQueueFp fp
   case queued of
     -- something is there!
     Just q  ->
@@ -110,71 +137,18 @@ expectTagged = do
     -- otherwise...
     Nothing -> do
       bs <- expectBS
-      let fpIn = fromMaybe def (bsFingerprint bs)
-      if fpIn == fp
-        then
-          case decodeTagged bs of
-            Just a  -> return a
-            Nothing -> error "Unable to decode tagged ByteString."
-        else do
-          queueUpFp fpIn bs
-          expectTagged
-
-send :: Text -> ConnectionProcess ()
-send t = ProcessSend t (return ())
-
-selfConn :: ConnectionProcess Connection
-selfConn = ProcessRead return
-
-popQueue :: TagFingerprint -> ConnectionProcess (Maybe ByteString)
-popQueue fp = do
-  tqsref <- connTypeQueues <$> selfConn
-  tq <- M.lookup fp <$> liftIO (readIORef tqsref)
-  case tq of
-    Nothing  -> return Nothing
-    Just tqseq -> do
-      case viewl tqseq of
-        EmptyL -> return Nothing
-        a :< rest -> do
-          liftIO $ modifyIORef' tqsref (M.insert fp rest)
-          return (Just a)
-
-queueUpFp :: TagFingerprint -> ByteString -> ConnectionProcess ()
-queueUpFp fp bs = do
-    tqsref <- connTypeQueues <$> selfConn
-    liftIO $ modifyIORef' tqsref (M.insertWith f fp (S.singleton bs))
-  where
-    f = flip (><)
+      case bsFingerprint bs of
+        Just fpIn
+          | fpIn == fp ->
+              case decodeTagged bs of
+                Just a  -> return a
+                Nothing -> error "Unable to decode tagged ByteString"
+          | otherwise -> do
+              queueUpFp fpIn bs
+              expectTagged
+        Nothing   -> expectTagged
 
 
-awaitMessage :: Connection -> IO ByteString
-awaitMessage (Connection _ q w _) = do
-    msg <- ws_awaitConn q w
-    blb <- isBlob msg
-    if blb
-      then do
-        let blob = unsafeCoerce msg
-        fromStrict <$> readBlob blob
-      else do
-        let blob = unsafeCoerce msg :: JSString
-        return (fromStrict . encodeUtf8 . fromJSString $ blob)
+connOrigin :: Connection -> Text
+connOrigin = _connOrigin
 
-closeConnection :: Connection -> IO ()
-closeConnection (Connection s _ _ _) = ws_closeSocket s
-
-openConnection :: Text -> IO Connection
-openConnection url = do
-    queue <- newArray
-    waiters <- newArray
-    socket <- ws_newSocket (toJSString url) queue waiters
-    tqs <- newIORef M.empty
-    return $ Connection socket queue waiters tqs
-
-withUrl :: Text -> ConnectionProcess a -> IO a
-withUrl url process = do
-    conn <- openConnection url
-
-    res <- withConn conn process
-
-    closeConnection conn
-    return res
