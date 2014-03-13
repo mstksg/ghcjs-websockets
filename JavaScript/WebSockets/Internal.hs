@@ -31,10 +31,10 @@ module JavaScript.WebSockets.Internal (
 
 import Control.Applicative       (Applicative, (<*>), pure, (<$>))
 import Control.Monad             (ap)
+import Control.Concurrent.MVar   (MVar, newMVar, readMVar, modifyMVar_)
 import Control.Monad.IO.Class    (MonadIO, liftIO)
 import Data.Binary.Tagged
 import Data.ByteString.Lazy      (ByteString, fromStrict, toStrict)
-import Data.IORef                (IORef, newIORef, readIORef, modifyIORef')
 import Data.Map.Strict           (Map)
 import Data.Sequence             as S
 import Data.Text                 (Text)
@@ -59,7 +59,7 @@ type TypeQueue = Map TagFingerprint (Seq ByteString)
 data Connection = Connection { _connSocket     :: Socket
                              , _connQueue      :: ConnectionQueue
                              , _connWaiters    :: ConnectionWaiters
-                             , _connTypeQueues :: IORef TypeQueue
+                             , _connTypeQueues :: MVar TypeQueue
                              , _connOrigin     :: Text
                              , _connTagged     :: Bool
                              }
@@ -109,7 +109,6 @@ foreign import javascript unsafe "$1.send($2)" ws_socketSend :: Socket -> JSStri
 
 foreign import javascript interruptible  "var ws = new WebSocket($1);\
                                           ws.onmessage = function(e) {\
-                                            console.log(e);\
                                             if (!(typeof e === 'undefined')) {\
                                               $2.push(e.data);\
                                               if ($3.length > 0) {\
@@ -190,7 +189,7 @@ openConnection_ t url = do
   queue <- newArray
   waiters <- newArray
   socket <- ws_newSocket (toJSString url) queue waiters
-  tqs <- newIORef M.empty
+  tqs <- newMVar M.empty
   return $ Connection socket queue waiters tqs url t
 
 -- | Closes the given 'Connection'.  Closed connections really aren't
@@ -220,20 +219,20 @@ connTagged = _connTagged
 popQueueFp :: TagFingerprint -> ConnectionProcess (Maybe ByteString)
 popQueueFp fp = do
   tqsref <- _connTypeQueues <$> selfConn
-  tq <- M.lookup fp <$> liftIO (readIORef tqsref)
+  tq <- M.lookup fp <$> liftIO (readMVar tqsref)
   case tq of
     Nothing  -> return Nothing
     Just tqseq -> do
       case viewl tqseq of
         EmptyL -> return Nothing
         a :< rest -> do
-          liftIO $ modifyIORef' tqsref (M.insert fp rest)
+          liftIO $ modifyMVar_ tqsref (return . M.insert fp rest)
           return (Just a)
 
 queueUpFp :: TagFingerprint -> ByteString -> ConnectionProcess ()
 queueUpFp fp bs = do
     tqsref <- _connTypeQueues <$> selfConn
-    liftIO $ modifyIORef' tqsref (M.insertWith f fp (S.singleton bs))
+    liftIO $ modifyMVar_ tqsref (return . M.insertWith f fp (S.singleton bs))
   where
     f = flip (><)
 
