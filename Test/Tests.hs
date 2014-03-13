@@ -31,7 +31,7 @@ instance Binary a => Binary (BTree a)
 
 main :: IO ()
 main = do
-  c <- openTaggedConnection "ws://home.jle0.com:4270"
+  c <- openTaggedConnection "your-server"
   withConn c ptest
   block <- newEmptyMVar
   withConn c $ do
