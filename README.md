@@ -30,24 +30,24 @@ Some examples
 
 * Some *io-stream*-style usage.
 
-      -- Echoes input from the server.
-      main :: IO ()
-      main = do
-          c <- openConnection "ws://server-url.com"
-          forever $ do
-              d <- withConn c expectText
-              putStrLn d
-              withConn c (sendText d)
-          closeConnection c
+        -- Echoes input from the server.
+        main :: IO ()
+        main = do
+            c <- openConnection "ws://server-url.com"
+            forever $ do
+                d <- withConn c expectText
+                putStrLn d
+                withConn c (sendText d)
+            closeConnection c
 
-* Commands involving connections can be sequenced with a monadic interface
+* Commands involving connections can be sequenced with a monadic interface.
 
-      -- Echoes input from the server.
-      main :: IO ()
-      main = withUrl "ws://server-url.com" . forever $ do
-          d <- expectText
-          liftIO $ putStrLn d
-          sendText d
+        -- Echoes input from the server.
+        main :: IO ()
+        main = withUrl "ws://server-url.com" . forever $ do
+            d <- expectText
+            liftIO $ putStrLn d
+            sendText d
 
 * Wait for incoming data only decodable as a desired type, and skip over
   undecodable data.
