@@ -91,16 +91,57 @@ import Prelude hiding                 (mapM_)
 -- A simple client that echos what it receives to the console and back to
 -- the server:
 --
--- > withUrl "ws://server-url.com" . forever $ do
+-- > main :: IO ()
+-- > main = do
+-- >     c <- openConnection "ws://server-url.com"
+-- >     forever $ do
+-- >         d <- withConn c expectText
+-- >         putStrLn d
+-- >         withConn c (sendText d)
+-- >     closeConnection c
+--
+-- 'openConnection' @url@ givs you a 'Connection' that you can use to
+-- receive or send data.
+--
+-- 'withConn' takes a 'Connection' and a 'ConnectionProcess', which
+-- describes a computation/process to be done with a 'Connection', and runs
+-- that 'ConnectionProcess' with that 'Connection'.  The above example uses
+-- 'expectText' @:: ConnectionProcess Text@ and 'sendText' @:: Text ->
+-- ConnectionProcess ()@.
+--
+-- This basic interface mimics @io-stream@-like behavior, or behavior more
+-- like the serverside @websockets@ library
+-- <http://hackage.haskell.org/package/websockets>.  Just remember to close
+-- the connection when you are done!
+--
+-- As you might guess, 'ConnectionProcess' is a 'Monad', so you can
+-- sequence it with @do@ notation and all the handy 'Monad' tools Haskell
+-- offers; it is also a 'MonadIO' so you can perform arbitrary 'IO' actions
+-- with it.
+--
+-- The above example can be re-written as:
+--
+-- > main :: IO ()
+-- > main = do
+-- >     c <- openConnection "ws://server-url.com"
+-- >     withConn c . forever $ do
+-- >         d <- expectText
+-- >         liftIO $ putStrLn d
+-- >         sendText d
+-- >     closeConnection c
+--
+-- Or, even more safely, as
+--
+-- > main :: IO ()
+-- > main = withUrl "ws://server-url.com" . forever $ do
 -- >     d <- expectText
 -- >     liftIO $ putStrLn d
 -- >     sendText d
 --
--- 'withUrl' takes a url a 'ConnectionProcess'.  A 'ConnectionProcess'
--- describes a computation/process to be done with a given websocket
--- connection.  'ConnectionProcess' is a 'Monad', so it can be sequenced
--- using @do@ notation.  It is also a 'MonadIO', so you can perform
--- arbitrary 'IO' actions as well using 'liftIO'.
+-- 'withUrl' takes a url and a 'ConnectionProcess', opens a 'Connection',
+-- runs the 'ConnectionProcess', and closes the 'Connection'; it handles
+-- all the boring stuff for you and it is recommended that you always use
+-- 'withUrl' when possible.
 --
 -- You can received typed data, too, if it can be serialized/deserialized
 -- using the @Binary@ <http://hackage.haskell.org/package/binary> library.
@@ -118,24 +159,6 @@ import Prelude hiding                 (mapM_)
 -- >       Nothing ->
 -- >           return ()
 --
---
--- If living inside a monad is a bit too constraining --- if, for example,
--- you want to work with multiple websocket connections at once --- you can
--- always fire off 'ConnectionProcess''s one at a time using 'withConn' and
--- 'openConnection':
---
--- > main :: IO ()
--- > main = do
--- >     c <- openConnection "ws://server-url.com"
--- >     d <- withConn c expectText
--- >     putStrLn d
--- >     withConn c (sendText "goodbye!")
--- >     closeConnection c
---
--- to mimic @io-stream@-like behavior, or for behavior more like the
--- serverside @websockets@ library
--- <http://hackage.haskell.org/package/websockets>.  Just remember to close
--- the connection when you are done!
 --
 -- Note that with 'expect' and 'expectText', messages that come in that
 -- aren't decodable as the desired type are discarded.  You can keep them
