@@ -72,7 +72,7 @@ module JavaScript.WebSockets (
   , expect              -- :: Binary a => ConnectionProcess a
   , expectTagged        -- :: (Binary a, Typeable a) => ConnectionProcess a
     -- ** Miscellaneous commands
-  , forkProcess         -- :: ConnectionProcess a -> ConnectionProcess ThreadId
+  , forkProcess         -- :: ConnectionProcess () -> ConnectionProcess ThreadId
   , selfConn            -- :: ConnectionProcess Connection
   ) where
 

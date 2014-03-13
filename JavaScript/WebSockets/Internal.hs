@@ -2,7 +2,6 @@
 {-# LANGUAGE JavaScriptFFI #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ExistentialQuantification #-}
 
 module JavaScript.WebSockets.Internal (
     -- * Types
@@ -35,7 +34,7 @@ module JavaScript.WebSockets.Internal (
 import Control.Applicative       (Applicative, (<*>), pure, (<$>))
 import Control.Concurrent        (ThreadId, forkIO)
 import Control.Concurrent.MVar   (MVar, newMVar, readMVar, modifyMVar_)
-import Control.Monad             (ap, void)
+import Control.Monad             (ap)
 import Control.Monad.IO.Class    (MonadIO, liftIO)
 import Data.Binary.Tagged
 import Data.ByteString.Lazy      (ByteString, fromStrict, toStrict)
@@ -79,8 +78,7 @@ data ConnectionProcess a = ProcessExpect (ByteString -> ConnectionProcess a)
                          | ProcessSend   ByteString
                                          (ConnectionProcess a)
                          | ProcessRead   (Connection -> ConnectionProcess a)
-                         | forall b.
-                             ProcessFork (ConnectionProcess b)
+                         | ProcessFork   (ConnectionProcess ())
                                          (ThreadId -> ConnectionProcess a)
                          | ProcessIO     (IO (ConnectionProcess a))
                          | ProcessPure   a
@@ -160,7 +158,7 @@ withConn conn (ProcessSend s p)  = do
     withConn conn p
 withConn conn (ProcessRead p)    = withConn conn (p conn)
 withConn conn (ProcessFork k p)  = do
-    tId <- forkIO (void $ withConn conn k)
+    tId <- forkIO (withConn conn k)
     withConn conn (p tId)
 withConn conn (ProcessIO io)     = io >>= withConn conn
 withConn _    (ProcessPure x)    = return x
@@ -221,7 +219,7 @@ selfConn = ProcessRead return
 -- | Forks a parallel 'ConnectionProcess' from another 'ConnectionProcess',
 -- all referring to the same 'Connection'.  Nothing magical; uses 'forkIO',
 -- so has all of the same semantics.  Returns the 'ThreadId'.
-forkProcess :: ConnectionProcess a -> ConnectionProcess ThreadId
+forkProcess :: ConnectionProcess () -> ConnectionProcess ThreadId
 forkProcess k = ProcessFork k return
 
 -- | Returns the origin (url) of the given 'Connection'.
