@@ -7,12 +7,12 @@ receiving serialized tagged and untagged data.
 
 The interface abstracts websockets as raw data streams and is designed to
 allow multiple styles of usage; in particular, is adapted for
-*[io-stream][]*-style usage and *[distributed-process][]*-style usage.  It is
+[io-stream][]-style usage and [distributed-process][]-style usage.  It is
 designed to fit in unintrusively in larger frameworks, and adaptable for other
 interfaces (like *pipes*).
 
 This library provides both *tagged* and *untagged* communication channels,
-using *[tagged-binary][]*.
+using [tagged-binary][].
 
 * *Untagged* channels will throw away incoming binary data of unexpected type.
 
@@ -20,7 +20,7 @@ using *[tagged-binary][]*.
   accessed later when data of that type is requested.
 
 Tagged channels mimic the behavior of [Cloud Haskell][] and
-*[distributed-process][]*, with their dynamic communication channels.  You
+[distributed-process][], with their dynamic communication channels.  You
 can use the same channel to send in polymorphic, typed data and deal with it
 at the time you wish.
 
@@ -69,7 +69,7 @@ whileJust = do
           return ()
 ```
 
-* Typed dynamic communication channels with *[tagged-binary][]*; channels
+* Typed dynamic communication channels with [tagged-binary][]; channels
   looking for a specific type skip over input of the wrong type, and channels
   looking for the other type can pick them up later or in parallel.
 
