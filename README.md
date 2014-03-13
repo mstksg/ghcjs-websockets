@@ -1,9 +1,9 @@
 ghcjs-websockets
 ================
 
-*ghcjs-websockets* aims to provide an clean, idiomatic Haskell interface
-abstracting over the Javascript Websockets API, targeting `ghcjs` for
-receiving serialized tagged and untagged data.
+*ghcjs-websockets* aims to provide an clean, idiomatic, *concurrent* Haskell
+interface abstracting over the Javascript Websockets API, targeting `ghcjs`
+for receiving serialized tagged and untagged data.
 
 The interface abstracts websockets as raw data streams and is designed to
 allow multiple styles of usage; in particular, is adapted for
@@ -76,19 +76,17 @@ whileJust = do
 ```haskell
 -- Server emits `Int`s or `String`s randomly; launch two parallel threads
 -- to catch the data as it comes in, one watching for `Int`s and one watching
--- for `String`s.
+-- for `String`s.  Note the `forkProcess` `ConnectionProcess` command.
 main :: IO ()
-main = do
-   c <- openTaggedConnection "ws://server-url.com"
-   t1 <- forkIO . withConn c . forever $ do
-       n <- expectTagged
-       replicateM n . liftIO . putStrLn $ "got a number! " ++ show n
-   t2 <- forkIO . withConn c . forever $ do
-       s <- expectTagged
-       liftIO $ putStrN s
-   await t1
-   await t2
-   closeConnection c
+main = withUrl "ws://server-url.com" $ do
+    block <- liftIO newEmptyMVar
+    forkProcess . forever $ do
+        n <- expectTagged
+        replicateM n . liftIO . putStrLn $ "got a number! " ++ show n
+    forkProcess . forever $ do
+        s <- expectTagged
+        liftIO $ putStrLn s
+    liftIO $ takeMVar block
 ```
 
 There is still some functionality left to be desired; feel free to open a

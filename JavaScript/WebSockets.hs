@@ -12,9 +12,10 @@
 -- Stability   : unstable
 -- Portability : portable
 --
--- 'JavaScript.WebSockets' aims to provide an clean, idiomatic Haskell
--- interface for working over the Javascript Websockets API, targeting
--- @ghcjs@ for receiving serialized tagged and untagged data.
+-- 'JavaScript.WebSockets' aims to provide an clean, idiomatic,
+-- /concurrent/ Haskell interface for working over the Javascript
+-- Websockets API, targeting @ghcjs@ for receiving serialized tagged and
+-- untagged data.
 --
 -- This library provides both /tagged/ and /untagged/ communication
 -- channels, using @tagged-binary@
@@ -54,15 +55,15 @@ module JavaScript.WebSockets (
   , openTaggedConnection    -- :: Text -> IO Connection
   , closeConnection         -- :: Connection -> IO ()
     -- ** Inspecting connections
-  , selfConn            -- :: ConnectionProcess Connection
   , connOrigin          -- :: Connection -> Text
   , connTagged          -- :: Connection -> Bool
-    -- * Sending messages
+    -- * 'ConnectionProcess' commands
+    -- ** Sending messages
   , sendText            -- :: Text -> ConnectionProcess ()
   , sendBinary          -- :: Binary a => a -> ConnectionProcess ()
   , send                -- :: Sendable a => a -> ConnectionProcess ()
   , sendTagged          -- :: (Binary a, Typeable a) => ConnectionProcess ()
-    -- * Receiving messages
+    -- ** Receiving messages
     -- $ receiving
   , expectBS            -- :: ConnectionProcess ByteString
   , expectText          -- :: ConnectionProcess Text
@@ -70,6 +71,9 @@ module JavaScript.WebSockets (
   , expectMaybe         -- :: Binary a => ConnectionProcess (Maybe a)
   , expect              -- :: Binary a => ConnectionProcess a
   , expectTagged        -- :: (Binary a, Typeable a) => ConnectionProcess a
+    -- ** Miscellaneous commands
+  , forkProcess         -- :: ConnectionProcess a -> ConnectionProcess ThreadId
+  , selfConn            -- :: ConnectionProcess Connection
   ) where
 
 import Control.Applicative            ((<$>))
@@ -174,20 +178,19 @@ import Prelude hiding                 (mapM_)
 --
 -- Use it with 'expectTagged'.  For example, say we have a server that
 -- sends (tagged) numbers and strings randomly, and we want to do something
--- with numbers and something with strings in parallel.
+-- with numbers and something with strings in parallel.  (Note the
+-- 'forkProcess' 'ConnectionProcess' command)
 --
 -- > main :: IO ()
--- > main = do
--- >    c <- openTaggedConnection "ws://server-url.com"
--- >    t1 <- forkIO . withConn c . forever $ do
--- >        n <- expectTagged
--- >        replicateM n . liftIO . putStrLn $ "got a number! " ++ show n
--- >    t2 <- forkIO . withConn c . forever $ do
--- >        s <- expectTagged
--- >        liftIO $ putStrN s
--- >    await t1
--- >    await t2
--- >    closeConnection c
+-- > main = withUrlTagged "ws://server-url.com" $ do
+-- >     block <- liftIO newEmptyMVar
+-- >     forkProcess . forever $ do
+-- >         n <- expectTagged
+-- >         replicateM n . liftIO . putStrLn $ "got a number! " ++ show n
+-- >     forkProcess . forever $ do
+-- >         s <- expectTagged
+-- >         liftIO $ putStrLn s
+-- >     liftIO $ takeMVar block
 --
 -- The first 'expectTagged' will only receive 'Int's, and the second will
 -- only receive 'String's.  However, the two can safely receive 'Int's and

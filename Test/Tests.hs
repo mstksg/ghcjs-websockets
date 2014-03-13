@@ -31,23 +31,21 @@ instance Binary a => Binary (BTree a)
 
 main :: IO ()
 main = do
-  c <- openTaggedConnection "my-server"
+  c <- openTaggedConnection "ws://home.jle0.com:4270"
   withConn c ptest
-  ts@[t1,t2,t3] <- replicateM 3 newEmptyMVar
-  forkIO . withConn c . forever $ do
-    strs <- replicateM 2 expectTagged :: ConnectionProcess [BTree String]
-    let msg = "String trees sum to " ++ show (concat (concatMap toList strs))
-    liftIO $ putStrLn msg
-    sendText (T.pack msg)
-  forkIO . withConn c . forever $ do
-    ints <- replicateM 3 expectTagged :: ConnectionProcess [BTree Int]
-    let msg = "Integer trees sum to " ++ show (sum (concatMap toList ints))
-    liftIO $ putStrLn msg
-    sendText (T.pack msg)
-  -- forkIO . withConn c . forever $ do
-  --   t <- expectText
-  --   liftIO $ T.putStrLn t
-  mapM_ takeMVar ts
+  block <- newEmptyMVar
+  withConn c $ do
+    forkProcess . forever $ do
+      strs <- replicateM 2 expectTagged :: ConnectionProcess [BTree String]
+      let msg = "String trees sum to " ++ show (concat (concatMap toList strs))
+      liftIO $ putStrLn msg
+      sendText (T.pack msg)
+    forkProcess . forever $ do
+      ints <- replicateM 3 expectTagged :: ConnectionProcess [BTree Int]
+      let msg = "Integer trees concat to " ++ show (sum (concatMap toList ints))
+      liftIO $ putStrLn msg
+      sendText (T.pack msg)
+  takeMVar block
   return ()
 
 
