@@ -30,61 +30,61 @@ Some examples
 
 * *io-stream*-style usage.
 
-    -- Echoes input from the server.
-    main :: IO ()
-    main = do
-        c <- openConnection "ws://server-url.com"
-        forever $ do
-            d <- withConn c expectText
-            putStrLn d
-            withConn c (sendText d)
-        closeConnection c
+      -- Echoes input from the server.
+      main :: IO ()
+      main = do
+          c <- openConnection "ws://server-url.com"
+          forever $ do
+              d <- withConn c expectText
+              putStrLn d
+              withConn c (sendText d)
+          closeConnection c
 
 * Commands involving connections can be sequenced with a monadic interface
 
-    -- Echoes input from the server.
-    main :: IO ()
-    main = withUrl "ws://server-url.com" . forever $ do
-        d <- expectText
-        liftIO $ putStrLn d
-        sendText d
+      -- Echoes input from the server.
+      main :: IO ()
+      main = withUrl "ws://server-url.com" . forever $ do
+          d <- expectText
+          liftIO $ putStrLn d
+          sendText d
 
 * Wait for incoming data only decodable as a desired type, and skip over
   undecodable data.
 
-    -- Keep on printing all `Just` values, and stop at the
-    -- first `Nothing`.
-    whileJust :: ConnectionProcess ()
-    whileJust = do
-        d <- expect
-        case d of
-          Just d' -> do
-              liftIO $ putStrLn d'
-              whileJust
-          Nothing ->
-              return ()
+      -- Keep on printing all `Just` values, and stop at the
+      -- first `Nothing`.
+      whileJust :: ConnectionProcess ()
+      whileJust = do
+          d <- expect
+          case d of
+            Just d' -> do
+                liftIO $ putStrLn d'
+                whileJust
+            Nothing ->
+                return ()
 
 * Typed dynamic communication channels with *tagged-binary*
   <http://hackage.haskell.org/package/tagged-binary>; channels looking for a
   specific type skip over input of the wrong type, and channels looking for
   the other type can pick them up later or in parallel.
 
-    -- Server emits `Int`s or `String`s randomly; launch
-    -- two parallel threads to catch the data as it comes
-    -- in, one watching for `Int`s and one watching for
-    -- `String`s.
-    main :: IO ()
-    main = do
-       c <- openTaggedConnection "ws://server-url.com"
-       t1 <- forkIO . withConn c . forever $ do
-           n <- expectTagged
-           replicateM n . liftIO . putStrLn $ "got a number! " ++ show n
-       t2 <- forkIO . withConn c . forever $ do
-           s <- expectTagged
-           liftIO $ putStrN s
-       await t1
-       await t2
-       closeConnection c
+      -- Server emits `Int`s or `String`s randomly; launch
+      -- two parallel threads to catch the data as it comes
+      -- in, one watching for `Int`s and one watching for
+      -- `String`s.
+      main :: IO ()
+      main = do
+         c <- openTaggedConnection "ws://server-url.com"
+         t1 <- forkIO . withConn c . forever $ do
+             n <- expectTagged
+             replicateM n . liftIO . putStrLn $ "got a number! " ++ show n
+         t2 <- forkIO . withConn c . forever $ do
+             s <- expectTagged
+             liftIO $ putStrN s
+         await t1
+         await t2
+         closeConnection c
 
 There is still some functionality left to be desired; feel free to open a
 ticket and send in suggestions or bugs, and all pull requests are welcomed!

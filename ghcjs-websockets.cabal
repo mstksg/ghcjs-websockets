@@ -1,5 +1,5 @@
 name:                ghcjs-websockets
-version:             0.1.0.0
+version:             0.2.0.0
 synopsis:            GHCJS interface for the Javascript Websocket API
 description:         'JavaScript.WebSockets' aims to provide an clean,
                      idiomatic Haskell interface abstracting over the
@@ -94,6 +94,9 @@ description:         'JavaScript.WebSockets' aims to provide an clean,
                      >    await t1
                      >    await t2
                      >    closeConnection c
+                     .
+                     See the 'JavaScript.WebSockets' module for a more
+                     detailed introduction.
                      .
                      There is still some functionality left to be desired;
                      feel free to open a ticket and send in suggestions or
