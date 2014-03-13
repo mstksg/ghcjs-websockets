@@ -11,7 +11,7 @@ main :: IO ()
 main = shakeArgs opts $ do
     want ["install","test"]
 
-    "install" ~> cmd "cabal" ["install", "--ghcjs"]
+    "install" ~> cmd "cabal" ["install", "--ghcjs", "--haddock-html"]
     "test" ~> do
         need ["install"]
         cmd "cp" ["-R", "dist/build/ghcjs-websockets-test/ghcjs-websockets-test.jsexe", "/home/justin/public_html"]
