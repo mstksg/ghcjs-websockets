@@ -56,8 +56,8 @@ main = withUrl "ws://server-url.com" . forever $ do
   undecodable data.
 
 ```haskell
--- Keep on printing all `Just` values, and stop at the
--- first `Nothing`.
+-- Keep on printing all `Just` values received, and stop at the first
+-- `Nothing`.
 whileJust :: ConnectionProcess ()
 whileJust = do
     d <- expect
@@ -74,10 +74,9 @@ whileJust = do
   looking for the other type can pick them up later or in parallel.
 
 ```haskell
--- Server emits `Int`s or `String`s randomly; launch
--- two parallel threads to catch the data as it comes
--- in, one watching for `Int`s and one watching for
--- `String`s.
+-- Server emits `Int`s or `String`s randomly; launch two parallel threads
+-- to catch the data as it comes in, one watching for `Int`s and one watching
+-- for `String`s.
 main :: IO ()
 main = do
    c <- openTaggedConnection "ws://server-url.com"
