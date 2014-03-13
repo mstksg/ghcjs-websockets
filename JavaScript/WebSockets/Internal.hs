@@ -21,6 +21,7 @@ module JavaScript.WebSockets.Internal (
   , openConnection
   , closeConnection
   , selfConn
+  , connOrigin
   , popQueueFp
   , queueUpFp
   , awaitMessage
@@ -130,7 +131,7 @@ foreign import javascript interruptible  "if ($1.length > 0) {\
                                           }"
   ws_awaitConn :: ConnectionQueue -> ConnectionWaiters -> IO (JSRef ())
 
--- Internal
+-- Low-level API
 
 -- | Execute/run a 'ConnectionProcess' process/computation inside an 'IO'
 -- monad with a given 'Connection'.
@@ -150,6 +151,11 @@ withConn conn (ProcessRead p)    = withConn conn (p conn)
 withConn conn (ProcessIO io)     = io >>= withConn conn
 withConn _    (ProcessPure x)    = return x
 
+-- | Opens a connection to the websocket server at the given URL.  Returns
+-- a 'Connection' object.
+--
+-- Unless you want to use multiple sockets simultaneously, consider using
+-- 'withUrl', which handles opening and closing connections for you.
 openConnection :: Text -> IO Connection
 openConnection url = do
     queue <- newArray
@@ -158,12 +164,26 @@ openConnection url = do
     tqs <- newIORef M.empty
     return $ Connection socket queue waiters tqs url
 
+-- | Closes the given 'Connection'.  Closed connections really aren't
+-- distinguishable from open connections at this point, so be aware that
+-- doing anything with a closed connection fails silently.
+--
+-- Unless you want to use multiple sockets simultaneously, consider using
+-- 'withUrl', which handles opening and closing connections for you.
 closeConnection :: Connection -> IO ()
 closeConnection (Connection s _ _ _ _) = ws_closeSocket s
 
-
+-- | Returns the 'Connection' that the 'ConnectionProcess' is being run
+-- with.
 selfConn :: ConnectionProcess Connection
 selfConn = ProcessRead return
+
+-- | Returns the origin (url) of the given 'Connection'.
+connOrigin :: Connection -> Text
+connOrigin = _connOrigin
+
+
+-- Internal stuff
 
 popQueueFp :: TagFingerprint -> ConnectionProcess (Maybe ByteString)
 popQueueFp fp = do
