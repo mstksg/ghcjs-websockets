@@ -28,7 +28,7 @@ typed data and deal with it at the time you wish.
 Some examples
 -------------
 
-* *io-stream*-style usage.
+* Some *io-stream*-style usage.
 
       -- Echoes input from the server.
       main :: IO ()
