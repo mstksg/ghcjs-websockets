@@ -19,9 +19,11 @@ module JavaScript.WebSockets.Internal (
     -- * Utility
   , withConn
   , openConnection
+  , openTaggedConnection
   , closeConnection
   , selfConn
   , connOrigin
+  , connTagged
   , popQueueFp
   , queueUpFp
   , awaitMessage
@@ -59,6 +61,7 @@ data Connection = Connection { _connSocket     :: Socket
                              , _connWaiters    :: ConnectionWaiters
                              , _connTypeQueues :: IORef TypeQueue
                              , _connOrigin     :: Text
+                             , _connTagged     :: Bool
                              }
 
 -- | Represents a process that can be executed with a 'Connection'.
@@ -154,15 +157,41 @@ withConn _    (ProcessPure x)    = return x
 -- | Opens a connection to the websocket server at the given URL.  Returns
 -- a 'Connection' object.
 --
+-- This opens a /non-tagged/ communcation channel.  All uses of 'expect' or
+-- attempts to get non-tagged typed data from this channel will throw away
+-- non-decodable data.  You can still use 'expectTagged' to get tagged
+-- data, and it'll still be queued, but other 'expect' functions won't
+-- queue anything.
+--
+-- If you don't ever expect to receive 'Tagged' data, this is for you.
+--
 -- Unless you want to use multiple sockets simultaneously, consider using
 -- 'withUrl', which handles opening and closing connections for you.
 openConnection :: Text -> IO Connection
-openConnection url = do
-    queue <- newArray
-    waiters <- newArray
-    socket <- ws_newSocket (toJSString url) queue waiters
-    tqs <- newIORef M.empty
-    return $ Connection socket queue waiters tqs url
+openConnection = openConnection_ False
+
+-- | Opens a connection to the websocket server at the given URL.  Returns
+-- a 'Connection' object.
+--
+-- This opens a /tagged/ communication channel.  All attempts to get typed
+-- data will pass over data of the wrong type and queue it for later
+-- access with 'expectTagged'.
+--
+-- If you expect to use 'Tagged' data, even mixed with untagged data, this
+-- is for you.
+--
+-- Unless you want to use multiple sockets simultaneously, consider using
+-- 'withUrlTagged', which handles opening and closing connections for you.
+openTaggedConnection :: Text -> IO Connection
+openTaggedConnection = openConnection_ True
+
+openConnection_ :: Bool -> Text -> IO Connection
+openConnection_ t url = do
+  queue <- newArray
+  waiters <- newArray
+  socket <- ws_newSocket (toJSString url) queue waiters
+  tqs <- newIORef M.empty
+  return $ Connection socket queue waiters tqs url t
 
 -- | Closes the given 'Connection'.  Closed connections really aren't
 -- distinguishable from open connections at this point, so be aware that
@@ -171,7 +200,7 @@ openConnection url = do
 -- Unless you want to use multiple sockets simultaneously, consider using
 -- 'withUrl', which handles opening and closing connections for you.
 closeConnection :: Connection -> IO ()
-closeConnection (Connection s _ _ _ _) = ws_closeSocket s
+closeConnection (Connection s _ _ _ _ _) = ws_closeSocket s
 
 -- | Returns the 'Connection' that the 'ConnectionProcess' is being run
 -- with.
@@ -182,6 +211,9 @@ selfConn = ProcessRead return
 connOrigin :: Connection -> Text
 connOrigin = _connOrigin
 
+-- | Returns if the given 'Connection' is a tagged channel.
+connTagged :: Connection -> Bool
+connTagged = _connTagged
 
 -- Internal stuff
 
@@ -206,7 +238,7 @@ queueUpFp fp bs = do
     f = flip (><)
 
 awaitMessage :: Connection -> IO ByteString
-awaitMessage (Connection _ q w _ _) = do
+awaitMessage (Connection _ q w _ _ _) = do
     msg <- ws_awaitConn q w
     blb <- isBlob msg
     if blb
