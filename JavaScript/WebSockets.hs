@@ -13,8 +13,8 @@
 -- Portability : portable
 --
 -- 'JavaScript.WebSockets' aims to provide an clean, idiomatic Haskell
--- interface for working abstracting over the Javascript Websockets API,
--- targeting @ghcjs@ for receiving serialized tagged and untagged data.
+-- interface for working over the Javascript Websockets API, targeting
+-- @ghcjs@ for receiving serialized tagged and untagged data.
 --
 -- This library provides both /tagged/ and /untagged/ communication
 -- channels, using @tagged-binary@
@@ -26,7 +26,7 @@
 -- * /Tagged/ channels will queue up binary data of unexpected type to be
 -- accessed later when data of that type is requested.
 --
--- /Tagged/ channels mimic the behavior of Cloud Haskell
+-- Tagged channels mimic the behavior of Cloud Haskell
 -- <http://www.haskell.org/haskellwiki/Cloud_Haskell> and
 -- @distributed-process@
 -- <http://hackage.haskell.org/package/distributed-process>, with their
@@ -159,7 +159,6 @@ import Prelude hiding                 (mapM_)
 -- >       Nothing ->
 -- >           return ()
 --
---
 -- Note that with 'expect' and 'expectText', messages that come in that
 -- aren't decodable as the desired type are discarded.  You can keep them
 -- using 'expectEither', which yields a 'Right' if the data is decodable or
@@ -179,7 +178,7 @@ import Prelude hiding                 (mapM_)
 --
 -- > main :: IO ()
 -- > main = do
--- >    c <- openConnection "ws://server-url.com"
+-- >    c <- openTaggedConnection "ws://server-url.com"
 -- >    t1 <- forkIO . withConn c . forever $ do
 -- >        n <- expectTagged
 -- >        replicateM n . liftIO . putStrLn $ "got a number! " ++ show n
@@ -193,7 +192,7 @@ import Prelude hiding                 (mapM_)
 -- The first 'expectTagged' will only receive 'Int's, and the second will
 -- only receive 'String's.  However, the two can safely receive 'Int's and
 -- 'String's in parallel without ever worrying about interfering with
--- eachother.
+-- each other.
 --
 -- You can also receive untagged data, like normal, with 'expect' and
 -- 'expectText'; any tagged data that they "skip over" will be queued up for
@@ -374,8 +373,9 @@ expectTagged = do
     -- something is there!
     Just q  ->
       case decodeTagged q of
-        Just a -> return a
-        Nothing -> error "Unable to decode tagged ByteString"
+        Just a  -> return a
+        -- eh.  skip.
+        Nothing -> expectTagged
     -- otherwise...
     Nothing -> do
       bs <- expectBS
@@ -384,7 +384,8 @@ expectTagged = do
           | fpIn == fp ->
               case decodeTagged bs of
                 Just a  -> return a
-                Nothing -> error "Unable to decode tagged ByteString"
+                -- eh.  skip.
+                Nothing -> expectTagged
           | otherwise -> do
               queueUpFp fpIn bs
               expectTagged
