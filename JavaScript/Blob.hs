@@ -25,12 +25,12 @@ foreign import javascript interruptible  "var reader = new FileReader();\
                                           reader.readAsBinaryString($1);"
     ffi_readBlob :: Blob -> IO JSString
 
-foreign import javascript unsafe "$1 instanceof Blob" ffi_blobCheck :: JSRef () -> IO Bool
+foreign import javascript unsafe "$1 instanceof Blob" ffi_blobCheck :: JSRef a -> IO Bool
 
 readBlob :: Blob -> IO ByteString
 readBlob b = encodeUtf8 . fromJSString <$> ffi_readBlob b
 
-isBlob :: JSRef () -> IO Bool
+isBlob :: JSRef a -> IO Bool
 isBlob ref = ffi_blobCheck ref
 
 

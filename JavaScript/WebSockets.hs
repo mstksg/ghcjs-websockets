@@ -260,10 +260,6 @@ sendText = send
 sendBinary :: Binary a => a -> ConnectionProcess ()
 sendBinary = send
 
--- | Send a lazy 'ByteString' through the connection.
-sendBS :: ByteString -> ConnectionProcess ()
-sendBS bs = ProcessSend bs (return ())
-
 -- | Send data tagged with 'Data.Binary.Tagged' --- basically, send the
 -- serialized data tagged with information about its type.  See
 -- 'Data.Binary.Tagged' in the @tagged-binary@ package
@@ -289,10 +285,6 @@ send = sendBS . encodeSendable
 -- away.  For tagged channels, tagged data that is skipped over will be
 -- queued up to be accessed by 'expectTagged' when data of that type is
 -- requested.
-
--- | Block and wait for a 'ByteString' to come from the connection.
-expectBS :: ConnectionProcess ByteString
-expectBS = ProcessExpect return
 
 -- | Block and wait for the next incoming (typed) message.  If the message
 -- can be successfully decoded into the desired type, return 'Right x'.

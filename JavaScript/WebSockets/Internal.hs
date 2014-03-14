@@ -1,36 +1,25 @@
-{-# LANGUAGE ForeignFunctionInterface #-}
-{-# LANGUAGE JavaScriptFFI #-}
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE RankNTypes #-}
-
 module JavaScript.WebSockets.Internal (
     -- * Types
     Connection(..)
   , ConnectionProcess(..)
-  , TypeQueue
-  , Socket
-  , Waiter
-  , ConnectionQueue
-  , ConnectionWaiters
-    -- * FFI
-  , ws_newSocket
-  , ws_socketSend
-  , ws_awaitConn
-  , ws_closeSocket
-    -- * Utility
+    -- * Connections
   , withConn
   , openConnection
   , openTaggedConnection
   , closeConnection
-  , selfConn
-  , forkProcess
   , connOrigin
   , connTagged
+    -- * Process
+  , sendBS
+  , expectBS
+  , selfConn
+  , forkProcess
+    -- * Utility
   , popQueueFp
   , queueUpFp
-  , awaitMessage
   ) where
 
+import JavaScript.WebSockets.FFI
 import Control.Applicative       (Applicative, (<*>), pure, (<$>))
 import Control.Concurrent        (ThreadId, forkIO)
 import Control.Concurrent.MVar   (MVar, newMVar, readMVar, modifyMVar_)
@@ -39,11 +28,11 @@ import Control.Monad.IO.Class    (MonadIO, liftIO)
 import Data.Binary.Tagged
 import Data.ByteString.Lazy      (ByteString, fromStrict, toStrict)
 import Data.Map.Strict           (Map)
+import GHCJS.Types               (JSString)
 import Data.Sequence             as S
 import Data.Text                 (Text)
 import Data.Text.Encoding        (encodeUtf8, decodeUtf8)
 import GHCJS.Foreign             (fromJSString, toJSString, newArray)
-import GHCJS.Types               (JSRef, JSArray, JSString)
 import JavaScript.Blob           (isBlob, readBlob)
 import Unsafe.Coerce             (unsafeCoerce)
 import qualified Data.Map.Strict as M
@@ -101,44 +90,6 @@ instance Functor ConnectionProcess where
 
 instance MonadIO ConnectionProcess where
     liftIO io = ProcessIO (return <$> io)
-
-data Socket_
-type Socket = JSRef Socket_
-
-data Waiter_
-type Waiter = JSRef Waiter_
-
-type ConnectionQueue = JSArray Text
-type ConnectionWaiters = JSArray Waiter
-
-foreign import javascript unsafe "$1.close();" ws_closeSocket :: Socket -> IO ()
-foreign import javascript unsafe "$1.send($2)" ws_socketSend :: Socket -> JSString -> IO ()
-
-foreign import javascript interruptible  "var ws = new WebSocket($1);\
-                                          ws.onmessage = function(e) {\
-                                            if (!(typeof e === 'undefined')) {\
-                                              $2.push(e.data);\
-                                              if ($3.length > 0) {\
-                                                var w0 = $3.shift();\
-                                                var e0 = $2.shift();\
-                                                w0(e0);\
-                                              }\
-                                            }\
-                                          };\
-                                          ws.onopen = function() {\
-                                            $c(ws);\
-                                          };"
-  ws_newSocket :: JSString -> ConnectionQueue -> ConnectionWaiters -> IO Socket
-
-foreign import javascript interruptible  "if ($1.length > 0) {\
-                                            var d = $1.shift();\
-                                            $c(d);\
-                                          } else {\
-                                            $2.push(function(d) {\
-                                              $c(d);\
-                                            });\
-                                          }"
-  ws_awaitConn :: ConnectionQueue -> ConnectionWaiters -> IO (JSRef ())
 
 -- Low-level API
 
@@ -210,6 +161,14 @@ openConnection_ t url = do
 -- 'withUrl', which handles opening and closing connections for you.
 closeConnection :: Connection -> IO ()
 closeConnection (Connection s _ _ _ _ _) = ws_closeSocket s
+
+-- | Send a lazy 'ByteString' through the connection.
+sendBS :: ByteString -> ConnectionProcess ()
+sendBS bs = ProcessSend bs (return ())
+
+-- | Block and wait for a 'ByteString' to come from the connection.
+expectBS :: ConnectionProcess ByteString
+expectBS = ProcessExpect return
 
 -- | Returns the 'Connection' that the 'ConnectionProcess' is being run
 -- with.

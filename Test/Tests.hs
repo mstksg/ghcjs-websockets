@@ -7,19 +7,21 @@ module Main where
 
 import Control.Applicative
 import Control.Concurrent
+import Control.Concurrent.MVar
 import Control.Monad
-import Data.Binary.Tagged
-import qualified Data.Text as T
 import Control.Monad.IO.Class
 import Data.Binary
+import Data.Binary.Tagged
+import Data.Char
 import Data.Typeable
-import Control.Concurrent.MVar
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Lazy as L
 import GHC.Generics
 import JavaScript.WebSockets
-import qualified Data.Text.Encoding as T
-import qualified Data.Text.IO       as T
+import Numeric
+import qualified Data.ByteString      as B
+import qualified Data.ByteString.Lazy as L
+import qualified Data.Text            as T
+import qualified Data.Text.Encoding   as T
+import qualified Data.Text.IO         as T
 
 data BTree a = Empty | Node a (BTree a) (BTree a) deriving (Show, Typeable, Generic, Functor)
 
@@ -29,29 +31,45 @@ toList (Node x t1 t2) = toList t1 ++ [x] ++ toList t2
 
 instance Binary a => Binary (BTree a)
 
+pBin :: L.ByteString -> IO ()
+pBin = putStrLn . concatMap (flip (showIntAtBase 2 intToDigit) "") . L.unpack
+
+
 main :: IO ()
 main = do
+  let x = encodeTagged (Empty :: BTree Int)
+  print (typeFingerprint (Empty :: BTree Int))
+  pBin x
+  print (bsFingerprint x)
+  print (decodeTagged x :: Maybe (BTree Int))
+
+
+  -- print (typeFingerprint (Empty :: BTree Int))
+
   c <- openTaggedConnection "your-server"
-  withConn c ptest
+  -- withConn c ptest
   block <- newEmptyMVar
   withConn c $ do
     forkProcess . forever $ do
-      strs <- replicateM 2 expectTagged :: ConnectionProcess [BTree String]
-      let msg = "String trees sum to " ++ show (concat (concatMap toList strs))
-      liftIO $ putStrLn msg
-      sendText (T.pack msg)
-    forkProcess . forever $ do
-      ints <- replicateM 3 expectTagged :: ConnectionProcess [BTree Int]
-      let msg = "Integer trees concat to " ++ show (sum (concatMap toList ints))
-      liftIO $ putStrLn msg
-      sendText (T.pack msg)
+      bs <- expectBS
+      liftIO . pBin $ bs
+      liftIO . print $ bsFingerprint bs
+    -- forkProcess . forever $ do
+    --   strs <- replicateM 2 expectTagged :: ConnectionProcess [BTree String]
+    --   let msg = "String trees sum to " ++ show (concat (concatMap toList strs))
+    --   liftIO $ putStrLn msg
+    --   sendText (T.pack msg)
+    -- forkProcess . forever $ do
+    --   ints <- replicateM 3 expectTagged :: ConnectionProcess [BTree Int]
+    --   let msg = "Integer trees concat to " ++ show (sum (concatMap toList ints))
+    --   liftIO $ putStrLn msg
+    --   sendText (T.pack msg)
   takeMVar block
   return ()
 
 
 ptest :: ConnectionProcess ()
 ptest = do
-  liftIO $ print (typeFingerprint (Empty :: BTree Int))
   k <- (*2) <$> return 14
   liftIO $ print k
   e <- expect
