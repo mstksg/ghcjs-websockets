@@ -127,6 +127,7 @@ library
                      spoon,
                      containers,
                      bytestring,
+                     base64-bytestring,
                      text
   -- hs-source-dirs:      
   default-language:    Haskell2010
@@ -141,6 +142,7 @@ executable ghcjs-websockets-test
                      bytestring,
                      tagged-binary >=0.1.2.0 && <0.2,
                      containers,
+                     base64-bytestring,
                      ghcjs-base,
                      transformers,
                      text

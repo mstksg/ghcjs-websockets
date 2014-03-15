@@ -33,6 +33,7 @@ foreign import javascript unsafe "$1.send($2)" ws_socketSend :: Socket -> JSStri
 foreign import javascript interruptible  "var ws = new WebSocket($1);\
                                           ws.onmessage = function(e) {\
                                             if (!(typeof e === 'undefined')) {\
+                                              console.log(e);\
                                               $2.push(e.data);\
                                               if ($3.length > 0) {\
                                                 var w0 = $3.shift();\

@@ -37,33 +37,38 @@ pBin = putStrLn . concatMap (flip (showIntAtBase 2 intToDigit) "") . L.unpack
 
 main :: IO ()
 main = do
-  let x = encodeTagged (Empty :: BTree Int)
-  print (typeFingerprint (Empty :: BTree Int))
-  pBin x
-  print (bsFingerprint x)
-  print (decodeTagged x :: Maybe (BTree Int))
+  -- let x = encodeTagged (Empty :: BTree Int)
+  -- print (typeFingerprint (Empty :: BTree Int))
+  -- pBin x
+  -- print (bsFingerprint x)
+  -- print (decodeTagged x :: Maybe (BTree Int))
+  -- pBin (encodeTagged (Empty :: BTree String))
 
 
   -- print (typeFingerprint (Empty :: BTree Int))
 
-  c <- openTaggedConnection "your-server"
+  c <- openTaggedConnection "ws://home.jle0.com:4270"
   -- withConn c ptest
   block <- newEmptyMVar
   withConn c $ do
     forkProcess . forever $ do
-      bs <- expectBS
-      liftIO . pBin $ bs
-      liftIO . print $ bsFingerprint bs
+      msg <- expectText
+      liftIO $ putStrLn "saw text"
+      liftIO $ T.putStrLn msg
     -- forkProcess . forever $ do
-    --   strs <- replicateM 2 expectTagged :: ConnectionProcess [BTree String]
-    --   let msg = "String trees sum to " ++ show (concat (concatMap toList strs))
-    --   liftIO $ putStrLn msg
-    --   sendText (T.pack msg)
-    -- forkProcess . forever $ do
-    --   ints <- replicateM 3 expectTagged :: ConnectionProcess [BTree Int]
-    --   let msg = "Integer trees concat to " ++ show (sum (concatMap toList ints))
-    --   liftIO $ putStrLn msg
-    --   sendText (T.pack msg)
+      -- bs <- expectBS
+      -- liftIO . pBin $ bs
+      -- liftIO . print $ bsFingerprint bs
+    forkProcess . forever $ do
+      strs <- replicateM 2 expectTagged :: ConnectionProcess [BTree String]
+      let msg = "String trees sum to " ++ show (concat (concatMap toList strs))
+      liftIO $ putStrLn msg
+      sendText (T.pack msg)
+    forkProcess . forever $ do
+      ints <- replicateM 3 expectTagged :: ConnectionProcess [BTree Int]
+      let msg = "Integer trees concat to " ++ show (sum (concatMap toList ints))
+      liftIO $ putStrLn msg
+      sendText (T.pack msg)
   takeMVar block
   return ()
 

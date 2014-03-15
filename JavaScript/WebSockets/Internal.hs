@@ -52,6 +52,7 @@ data Connection = Connection { _connSocket     :: Socket
                              , _connQueue      :: ConnectionQueue
                              , _connWaiters    :: ConnectionWaiters
                              , _connTypeQueues :: MVar TypeQueue
+                             , _connMessQueues :: (Seq ByteString, Seq Text)
                              , _connOrigin     :: Text
                              , _connTagged     :: Bool
                              }
@@ -63,7 +64,7 @@ data Connection = Connection { _connSocket     :: Socket
 --
 -- 'ConnectionProcess' is also a 'MonadIO', so you can execute arbitrary
 -- 'IO a' commands using 'liftIO'.
-data ConnectionProcess a = ProcessExpect (ByteString -> ConnectionProcess a)
+data ConnectionProcess a = ProcessExpect (Incoming -> ConnectionProcess a)
                          | ProcessSend   ByteString
                                          (ConnectionProcess a)
                          | ProcessRead   (Connection -> ConnectionProcess a)
@@ -92,6 +93,10 @@ instance MonadIO ConnectionProcess where
     liftIO io = ProcessIO (return <$> io)
 
 -- Low-level API
+
+data Incoming = IncomingText Text
+              | IncomingBinary ByteString
+              deriving (Show, Eq, Ord)
 
 -- | Execute/run a 'ConnectionProcess' process/computation inside an 'IO'
 -- monad with a given 'Connection'.
@@ -166,9 +171,13 @@ closeConnection (Connection s _ _ _ _ _) = ws_closeSocket s
 sendBS :: ByteString -> ConnectionProcess ()
 sendBS bs = ProcessSend bs (return ())
 
+expectMessage :: ConnectionProcess Incoming
+expectMessage = ProcessExpect return
+
 -- | Block and wait for a 'ByteString' to come from the connection.
 expectBS :: ConnectionProcess ByteString
-expectBS = ProcessExpect return
+expectBS = undefined
+
 
 -- | Returns the 'Connection' that the 'ConnectionProcess' is being run
 -- with.
@@ -211,14 +220,17 @@ queueUpFp fp bs = do
   where
     f = flip (><)
 
-awaitMessage :: Connection -> IO ByteString
-awaitMessage (Connection _ q w _ _ _) = do
+awaitMessage :: Connection -> IO Incoming
+awaitMessage conn@(Connection _ q w _ _ _) = do
     msg <- ws_awaitConn q w
     blb <- isBlob msg
     if blb
       then do
         let blob = unsafeCoerce msg
-        fromStrict <$> readBlob blob
+        readed <- fmap fromStrict <$> readBlob blob
+        case readed of
+          Just b -> return (IncomingBinary b)
+          Nothing -> awaitMessage conn
       else do
         let blob = unsafeCoerce msg :: JSString
-        return (fromStrict . encodeUtf8 . fromJSString $ blob)
+        return (IncomingText . fromJSString $ blob)
