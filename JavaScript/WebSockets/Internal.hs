@@ -1,18 +1,22 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE IncoherentInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module JavaScript.WebSockets.Internal (
     Connection
   , Sendable
+  , Receivable
+  , Incoming(..)
+  , Outgoing(..)
   , openConnection
   , closeConnection
   , sendMessage
   , send
   , awaitMessage
-  , awaitText_
-  , awaitByteString_
-  , awaitData_
+  , receiveText
+  , receiveByteString
+  , receiveData
   , clearTextQueue
   , clearDataQueue
   , clearQueues
@@ -25,8 +29,8 @@ import Control.Spoon             (teaspoon)
 import Data.Binary               (Binary, encode, decode)
 import Data.ByteString.Lazy      (ByteString, fromStrict, toStrict)
 import Data.Sequence             as S
-import Data.Text                 (Text)
-import Data.Text.Encoding        (encodeUtf8, decodeUtf8)
+import Data.Text as T            (Text, append, unpack)
+import Data.Text.Encoding        (decodeUtf8, encodeUtf8)
 import GHCJS.Foreign             (fromJSString, toJSString, newArray)
 import GHCJS.Types               (JSString)
 import JavaScript.Blob           (isBlob, readBlob)
@@ -53,11 +57,23 @@ data Outgoing = OutgoingText Text
 class Sendable s where
     wrapSendable :: s -> Outgoing
 
+class Receivable s where
+    unwrapReceivable :: Incoming -> Maybe s
+
 instance Sendable Text where
     wrapSendable = OutgoingText
 
 instance Binary a => Sendable a where
     wrapSendable = OutgoingData . encode
+
+instance Receivable Text where
+    unwrapReceivable (IncomingText t) = Just t
+    unwrapReceivable (IncomingData d) = teaspoon . decodeUtf8 . toStrict $ d
+
+instance Binary a => Receivable a where
+    unwrapReceivable (IncomingText t) = teaspoon . decode . fromStrict . encodeUtf8 $ t
+    unwrapReceivable (IncomingData d) = teaspoon . decode $ d
+
 
 openConnection :: Text -> IO Connection
 openConnection url = do
@@ -101,44 +117,48 @@ awaitMessage conn = do
       let blob = unsafeCoerce msg :: JSString
       return (IncomingText . fromJSString $ blob)
 
-awaitText_ :: Bool -> Connection -> IO Text
-awaitText_ = awaitQueue fi _connTextQueue _connDataQueue
+receiveText :: Connection -> IO Text
+receiveText = receiveQueue fi _connTextQueue _connDataQueue
   where
     fi (IncomingText t) = Right t
     fi (IncomingData d) = Left d
 
-awaitByteString_ :: Bool -> Connection -> IO ByteString
-awaitByteString_ = awaitQueue fi _connDataQueue _connTextQueue
+receiveByteString :: Connection -> IO ByteString
+receiveByteString = receiveQueue fi _connDataQueue _connTextQueue
   where
     fi (IncomingData d) = Right d
     fi (IncomingText t) = Left t
 
-awaitData_ :: Binary a => Bool -> Connection -> IO a
-awaitData_ queue conn = do
-  bs <- awaitByteString_ queue conn
-  case teaspoon (decode bs) of
+receiveData :: Receivable a => Connection -> IO a
+receiveData conn = do
+  msg <- awaitMessage conn
+  case unwrapReceivable msg of
     Just d  -> return d
-    Nothing -> awaitData_ queue conn
+    Nothing -> receiveData conn
 
-
-awaitQueue ::
+receiveQueue ::
        (Incoming -> Either b a)
     -> (Connection -> MVar (Seq a))
     -> (Connection -> MVar (Seq b))
-    -> (Bool -> Connection -> IO a)
-awaitQueue fi refa refb queue conn = do
-  queued <- popQueue (refa conn)
-  case queued of
-    Just x ->
-      return x
-    Nothing -> do
-      msg <- fi <$> awaitMessage conn
-      case msg of
-        Right x ->
+    -> (Connection -> IO a)
+receiveQueue fi refa refb conn = do
+  closed <- readMVar (_connClosed conn)
+  if closed
+    then error . T.unpack $
+      "Attempting to receive from closed websocket " `T.append` _connOrigin conn
+    else do
+      queued <- popQueue (refa conn)
+      case queued of
+        Just x ->
           return x
-        Left y  -> do
-          when queue $ pushQueue (refb conn) y
-          awaitQueue fi refa refb queue conn
+        Nothing -> do
+          msg <- fi <$> awaitMessage conn
+          case msg of
+            Right x ->
+              return x
+            Left y  -> do
+              pushQueue (refb conn) y
+              receiveQueue fi refa refb conn
 
 clearQueues :: Connection -> IO ()
 clearQueues conn = do
