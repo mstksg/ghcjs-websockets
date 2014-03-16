@@ -6,6 +6,7 @@ module JavaScript.WebSockets (
   , closeConnection
   , send
   , receiveText
+  , receiveDataMaybe
   , receiveData
   , receiveByteString
   , clearTextQueue
@@ -24,3 +25,12 @@ withUrl url process = do
       (closeConnection)
       process
 
+receiveDataMaybe :: Receivable a => Connection -> IO (Maybe a)
+receiveDataMaybe = fmap (either (const Nothing) Just) . receiveDataEither
+
+receiveData :: Receivable a => Connection -> IO a
+receiveData conn = do
+  md <- receiveDataMaybe conn
+  case md of
+    Just d  -> return d
+    Nothing -> receiveData conn

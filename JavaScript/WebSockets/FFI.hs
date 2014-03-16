@@ -28,7 +28,7 @@ type ConnectionQueue = JSArray Text
 type ConnectionWaiters = JSArray Waiter
 
 foreign import javascript unsafe "$1.close();" ws_closeSocket :: Socket -> IO ()
-foreign import javascript unsafe "$1.send($2)" ws_socketSend :: Socket -> JSString -> IO ()
+foreign import javascript unsafe "$1.send(atob($2))" ws_socketSend :: Socket -> JSString -> IO ()
 
 foreign import javascript interruptible  "var ws = new WebSocket($1);\
                                           ws.onmessage = function(e) {\

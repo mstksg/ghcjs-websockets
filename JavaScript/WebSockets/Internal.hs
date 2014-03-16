@@ -2,6 +2,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE IncoherentInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module JavaScript.WebSockets.Internal (
     Connection
@@ -16,7 +17,7 @@ module JavaScript.WebSockets.Internal (
   , awaitMessage
   , receiveText
   , receiveByteString
-  , receiveData
+  , receiveDataEither
   , clearTextQueue
   , clearDataQueue
   , clearQueues
@@ -30,14 +31,14 @@ import Data.Binary                           (Binary, encode, decode)
 import Data.ByteString.Lazy                  (ByteString, fromStrict, toStrict)
 import Data.Sequence                         as S
 import Data.Text as T                        (Text, append, unpack)
-import Debug.Trace
 import Data.Text.Encoding                    (decodeUtf8', encodeUtf8, decodeUtf8)
 import GHCJS.Foreign                         (fromJSString, toJSString, newArray)
 import GHCJS.Types                           (JSString)
 import JavaScript.Blob                       (isBlob, readBlob)
 import JavaScript.WebSockets.FFI
 import Unsafe.Coerce                         (unsafeCoerce)
-import qualified Data.ByteString.Base64.Lazy as B64
+import qualified Data.ByteString.Base64      as B64
+import qualified Data.ByteString.Base64.Lazy as B64L
 
 data Connection = Connection { _connSocket     :: Socket
                              , _connQueue      :: ConnectionQueue
@@ -104,9 +105,9 @@ sendMessage conn msg = do
     else
       ws_socketSend (_connSocket conn) (outgoingData msg)
   where
-    outgoingData (OutgoingText t) = toJSString t
-    -- outgoingData (OutgoingData d) = toJSString . decodeUtf8 . toStrict . B64.encode $ d
-    outgoingData (OutgoingData d) = toJSString . decodeUtf8 . toStrict $ d
+    outgoingData (OutgoingText t) = toJSString . decodeUtf8 . B64.encode . encodeUtf8 $ t
+    outgoingData (OutgoingData d) = toJSString . decodeUtf8 . toStrict . B64L.encode $ d
+    -- outgoingData (OutgoingData d) = toJSString . decodeUtf8 . toStrict $ d
 
 send :: Sendable a => Connection -> a -> IO ()
 send conn = sendMessage conn . wrapSendable
@@ -138,12 +139,11 @@ receiveByteString = receiveQueue fi _connDataQueue _connTextQueue
     fi (IncomingData d) = Right d
     fi (IncomingText t) = Left t
 
-receiveData :: Receivable a => Connection -> IO a
-receiveData conn = do
-  msg <- awaitMessage conn
-  case unwrapReceivable msg of
-    Just d  -> return d
-    Nothing -> receiveData conn
+receiveDataEither :: forall a. Receivable a => Connection -> IO (Either Incoming a)
+receiveDataEither conn = unwrap <$> awaitMessage conn
+  where
+    unwrap :: Incoming -> Either Incoming a
+    unwrap msg = maybe (Left msg) Right (unwrapReceivable msg)
 
 receiveQueue ::
        (Incoming -> Either b a)
