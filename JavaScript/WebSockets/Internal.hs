@@ -12,11 +12,16 @@ module JavaScript.WebSockets.Internal (
   , awaitMessage
   , awaitText_
   , awaitByteString_
+  , awaitData_
+  , clearTextQueue
+  , clearDataQueue
+  , clearQueues
   ) where
 
 import Control.Applicative       ((<$>))
-import Control.Concurrent.MVar   (MVar, newMVar, readMVar, modifyMVar_, putMVar, takeMVar)
-import Control.Monad             (when)
+import Control.Concurrent.MVar   (MVar, newMVar, readMVar, modifyMVar_, putMVar, takeMVar, swapMVar)
+import Control.Monad             (when, void)
+import Control.Spoon             (teaspoon)
 import Data.Binary               (Binary, encode, decode)
 import Data.ByteString.Lazy      (ByteString, fromStrict, toStrict)
 import Data.Sequence             as S
@@ -108,6 +113,14 @@ awaitByteString_ = awaitQueue fi _connDataQueue _connTextQueue
     fi (IncomingData d) = Right d
     fi (IncomingText t) = Left t
 
+awaitData_ :: Binary a => Bool -> Connection -> IO a
+awaitData_ queue conn = do
+  bs <- awaitByteString_ queue conn
+  case teaspoon (decode bs) of
+    Just d  -> return d
+    Nothing -> awaitData_ queue conn
+
+
 awaitQueue ::
        (Incoming -> Either b a)
     -> (Connection -> MVar (Seq a))
@@ -126,6 +139,20 @@ awaitQueue fi refa refb queue conn = do
         Left y  -> do
           when queue $ pushQueue (refb conn) y
           awaitQueue fi refa refb queue conn
+
+clearQueues :: Connection -> IO ()
+clearQueues conn = do
+  clearTextQueue conn
+  clearDataQueue conn
+
+clearTextQueue :: Connection -> IO ()
+clearTextQueue = clearQueue . _connTextQueue
+
+clearDataQueue :: Connection -> IO ()
+clearDataQueue = clearQueue . _connDataQueue
+
+clearQueue :: MVar (Seq a) -> IO ()
+clearQueue = void . flip swapMVar S.empty
 
 pushQueue :: MVar (Seq a) -> a -> IO ()
 pushQueue qref x = modifyMVar_ qref (return . (|> x))
