@@ -37,6 +37,7 @@ pBin = putStrLn . concatMap (flip (showIntAtBase 2 intToDigit) "") . L.unpack
 
 main :: IO ()
 main = do
+  putStrLn "hello world"
   -- let x = encodeTagged (Empty :: BTree Int)
   -- print (typeFingerprint (Empty :: BTree Int))
   -- pBin x
@@ -47,52 +48,52 @@ main = do
 
   -- print (typeFingerprint (Empty :: BTree Int))
 
-  c <- openTaggedConnection "ws://home.jle0.com:4270"
-  -- withConn c ptest
-  block <- newEmptyMVar
-  withConn c $ do
-    forkProcess . forever $ do
-      msg <- expectText
-      liftIO $ putStrLn "saw text"
-      liftIO $ T.putStrLn msg
-    -- forkProcess . forever $ do
-      -- bs <- expectBS
-      -- liftIO . pBin $ bs
-      -- liftIO . print $ bsFingerprint bs
-    forkProcess . forever $ do
-      strs <- replicateM 2 expectTagged :: ConnectionProcess [BTree String]
-      let msg = "String trees sum to " ++ show (concat (concatMap toList strs))
-      liftIO $ putStrLn msg
-      sendText (T.pack msg)
-    forkProcess . forever $ do
-      ints <- replicateM 3 expectTagged :: ConnectionProcess [BTree Int]
-      let msg = "Integer trees concat to " ++ show (sum (concatMap toList ints))
-      liftIO $ putStrLn msg
-      sendText (T.pack msg)
-  takeMVar block
-  return ()
+  -- c <- openTaggedConnection "ws://home.jle0.com:4270"
+  -- -- withConn c ptest
+  -- block <- newEmptyMVar
+  -- withConn c $ do
+  --   forkProcess . forever $ do
+  --     msg <- expectText
+  --     liftIO $ putStrLn "saw text"
+  --     liftIO $ T.putStrLn msg
+  --   -- forkProcess . forever $ do
+  --     -- bs <- expectBS
+  --     -- liftIO . pBin $ bs
+  --     -- liftIO . print $ bsFingerprint bs
+  --   forkProcess . forever $ do
+  --     strs <- replicateM 2 expectTagged :: ConnectionProcess [BTree String]
+  --     let msg = "String trees sum to " ++ show (concat (concatMap toList strs))
+  --     liftIO $ putStrLn msg
+  --     sendText (T.pack msg)
+  --   forkProcess . forever $ do
+  --     ints <- replicateM 3 expectTagged :: ConnectionProcess [BTree Int]
+  --     let msg = "Integer trees concat to " ++ show (sum (concatMap toList ints))
+  --     liftIO $ putStrLn msg
+  --     sendText (T.pack msg)
+  -- takeMVar block
+  -- return ()
 
 
-ptest :: ConnectionProcess ()
-ptest = do
-  k <- (*2) <$> return 14
-  liftIO $ print k
-  e <- expect
-  liftIO $ T.putStrLn (T.decodeUtf8 e)
-  sendText "hello again"
-  sendText "how are you"
-  sendText "does this work?"
-  sendText "yes!"
-  -- forever $ do
-  --   liftIO $ putStrLn "waiting for input:"
-  --   e  <- expect :: ConnectionProcess (BTree Int)
-  --   t1 <- expectTagged
-  --   liftIO $ print (t1 :: BTree Int)
-  --   t2 <- expectTagged
-  --   liftIO $ print (t2 :: BTree Int)
-  --   liftIO $ putStrLn "waiting showed"
-  --   t3 <- expectTagged
-  --   liftIO $ print (t3 :: BTree String)
-  return ()
+-- ptest :: ConnectionProcess ()
+-- ptest = do
+  -- k <- (*2) <$> return 14
+  -- liftIO $ print k
+  -- e <- expect
+  -- liftIO $ T.putStrLn (T.decodeUtf8 e)
+  -- sendText "hello again"
+  -- sendText "how are you"
+  -- sendText "does this work?"
+  -- sendText "yes!"
+  -- -- forever $ do
+  -- --   liftIO $ putStrLn "waiting for input:"
+  -- --   e  <- expect :: ConnectionProcess (BTree Int)
+  -- --   t1 <- expectTagged
+  -- --   liftIO $ print (t1 :: BTree Int)
+  -- --   t2 <- expectTagged
+  -- --   liftIO $ print (t2 :: BTree Int)
+  -- --   liftIO $ putStrLn "waiting showed"
+  -- --   t3 <- expectTagged
+  -- --   liftIO $ print (t3 :: BTree String)
+  -- return ()
 
 

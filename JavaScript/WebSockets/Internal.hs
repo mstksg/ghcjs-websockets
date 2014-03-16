@@ -1,236 +1,141 @@
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE IncoherentInstances #-}
+
 module JavaScript.WebSockets.Internal (
-    -- * Types
-    Connection(..)
-  , ConnectionProcess(..)
-    -- * Connections
-  , withConn
+    Connection
+  , Sendable
   , openConnection
-  , openTaggedConnection
   , closeConnection
-  , connOrigin
-  , connTagged
-    -- * Process
-  , sendBS
-  , expectBS
-  , selfConn
-  , forkProcess
-    -- * Utility
-  , popQueueFp
-  , queueUpFp
+  , sendMessage
+  , send
+  , awaitMessage
+  , awaitText_
+  , awaitByteString_
   ) where
 
-import JavaScript.WebSockets.FFI
-import Control.Applicative       (Applicative, (<*>), pure, (<$>))
-import Control.Concurrent        (ThreadId, forkIO)
-import Control.Concurrent.MVar   (MVar, newMVar, readMVar, modifyMVar_)
-import Control.Monad             (ap)
-import Control.Monad.IO.Class    (MonadIO, liftIO)
-import Data.Binary.Tagged
+import Control.Applicative       ((<$>))
+import Control.Concurrent.MVar   (MVar, newMVar, readMVar, modifyMVar_, putMVar, takeMVar)
+import Control.Monad             (when)
+import Data.Binary               (Binary, encode, decode)
 import Data.ByteString.Lazy      (ByteString, fromStrict, toStrict)
-import Data.Map.Strict           (Map)
-import GHCJS.Types               (JSString)
 import Data.Sequence             as S
 import Data.Text                 (Text)
 import Data.Text.Encoding        (encodeUtf8, decodeUtf8)
 import GHCJS.Foreign             (fromJSString, toJSString, newArray)
+import GHCJS.Types               (JSString)
 import JavaScript.Blob           (isBlob, readBlob)
+import JavaScript.WebSockets.FFI
 import Unsafe.Coerce             (unsafeCoerce)
-import qualified Data.Map.Strict as M
 
-type TypeQueue = Map TagFingerprint (Seq ByteString)
-
--- | Encapsulates a (reference to a) Websocket connection.  Ideally, you
--- should not have to deal with this yourself and should only be
--- interfacing with sockets within the 'ConnectionProcess' monad and
--- 'withUrl'.  However, if you want to (for example, if you want to
--- easily interface with multiple sockets at a time), you can get one with
--- 'openConnection' and run commands on it with 'withConn'.
---
--- Care must be taken to close the connection once you are done, or else
--- incoming messages will continue to queue.
 data Connection = Connection { _connSocket     :: Socket
                              , _connQueue      :: ConnectionQueue
                              , _connWaiters    :: ConnectionWaiters
-                             , _connTypeQueues :: MVar TypeQueue
-                             , _connMessQueues :: (Seq ByteString, Seq Text)
+                             , _connTextQueue  :: MVar (Seq Text)
+                             , _connDataQueue  :: MVar (Seq ByteString)
                              , _connOrigin     :: Text
-                             , _connTagged     :: Bool
+                             , _connClosed     :: MVar Bool
                              }
 
--- | Represents a process that can be executed with a 'Connection'.
--- 'ConnectionProcess' is a 'Monad', so you can chain together complex
--- processes with do notation and other monadic operations.  However, you
--- can also use these as one-shot commands inside 'IO' as well.
---
--- 'ConnectionProcess' is also a 'MonadIO', so you can execute arbitrary
--- 'IO a' commands using 'liftIO'.
-data ConnectionProcess a = ProcessExpect (Incoming -> ConnectionProcess a)
-                         | ProcessSend   ByteString
-                                         (ConnectionProcess a)
-                         | ProcessRead   (Connection -> ConnectionProcess a)
-                         | ProcessFork   (ConnectionProcess ())
-                                         (ThreadId -> ConnectionProcess a)
-                         | ProcessIO     (IO (ConnectionProcess a))
-                         | ProcessPure   a
-
-instance Monad ConnectionProcess where
-    return                    = ProcessPure
-    (ProcessExpect e)   >>= f = ProcessExpect $ \t -> e t >>= f
-    (ProcessSend s p)   >>= f = ProcessSend s $       p   >>= f
-    (ProcessRead p)     >>= f = ProcessRead   $ \c -> p c >>= f
-    (ProcessFork k p)   >>= f = ProcessFork k $ \i -> p i >>= f
-    (ProcessIO io)      >>= f = ProcessIO     $ fmap (>>= f) io
-    (ProcessPure a)     >>= f = f a
-
-instance Applicative ConnectionProcess where
-    pure = return
-    (<*>) = ap
-
-instance Functor ConnectionProcess where
-    fmap f s = pure f <*> s
-
-instance MonadIO ConnectionProcess where
-    liftIO io = ProcessIO (return <$> io)
-
--- Low-level API
-
 data Incoming = IncomingText Text
-              | IncomingBinary ByteString
-              deriving (Show, Eq, Ord)
+              | IncomingData ByteString
+              deriving (Show, Eq)
 
--- | Execute/run a 'ConnectionProcess' process/computation inside an 'IO'
--- monad with a given 'Connection'.
---
--- Remember that ideally you would not have to use this directly, and
--- instead use 'withUrl' to handle opening and closing the connection for
--- you.  However, this is here for you to be able to deal with explicit
--- connection managing and swapping.
-withConn :: Connection -> ConnectionProcess a -> IO a
-withConn conn (ProcessExpect p)  = do
-    msg <- awaitMessage conn
-    withConn conn (p msg)
-withConn conn (ProcessSend s p)  = do
-    ws_socketSend (_connSocket conn) (toJSString . decodeUtf8 . toStrict $ s)
-    withConn conn p
-withConn conn (ProcessRead p)    = withConn conn (p conn)
-withConn conn (ProcessFork k p)  = do
-    tId <- forkIO (withConn conn k)
-    withConn conn (p tId)
-withConn conn (ProcessIO io)     = io >>= withConn conn
-withConn _    (ProcessPure x)    = return x
+data Outgoing = OutgoingText Text
+              | OutgoingData ByteString
+              deriving (Show, Eq)
 
--- | Opens a connection to the websocket server at the given URL.  Returns
--- a 'Connection' object.
---
--- This opens a /non-tagged/ communcation channel.  All uses of 'expect' or
--- attempts to get non-tagged typed data from this channel will throw away
--- non-decodable data.  You can still use 'expectTagged' to get tagged
--- data, and it'll still be queued, but other 'expect' functions won't
--- queue anything.
---
--- If you don't ever expect to receive 'Tagged' data, this is for you.
---
--- Unless you want to use multiple sockets simultaneously, consider using
--- 'withUrl', which handles opening and closing connections for you.
+class Sendable s where
+    wrapSendable :: s -> Outgoing
+
+instance Sendable Text where
+    wrapSendable = OutgoingText
+
+instance Binary a => Sendable a where
+    wrapSendable = OutgoingData . encode
+
 openConnection :: Text -> IO Connection
-openConnection = openConnection_ False
-
--- | Opens a connection to the websocket server at the given URL.  Returns
--- a 'Connection' object.
---
--- This opens a /tagged/ communication channel.  All attempts to get typed
--- data will pass over data of the wrong type and queue it for later
--- access with 'expectTagged'.
---
--- If you expect to use 'Tagged' data, even mixed with untagged data, this
--- is for you.
---
--- Unless you want to use multiple sockets simultaneously, consider using
--- 'withUrlTagged', which handles opening and closing connections for you.
-openTaggedConnection :: Text -> IO Connection
-openTaggedConnection = openConnection_ True
-
-openConnection_ :: Bool -> Text -> IO Connection
-openConnection_ t url = do
+openConnection url = do
   queue <- newArray
   waiters <- newArray
   socket <- ws_newSocket (toJSString url) queue waiters
-  tqs <- newMVar M.empty
-  return $ Connection socket queue waiters tqs url t
+  tq <- newMVar empty
+  bq <- newMVar empty
+  closed <- newMVar False
+  return $ Connection socket queue waiters tq bq url closed
 
--- | Closes the given 'Connection'.  Closed connections really aren't
--- distinguishable from open connections at this point, so be aware that
--- doing anything with a closed connection fails silently.
---
--- Unless you want to use multiple sockets simultaneously, consider using
--- 'withUrl', which handles opening and closing connections for you.
 closeConnection :: Connection -> IO ()
-closeConnection (Connection s _ _ _ _ _) = ws_closeSocket s
+closeConnection conn = do
+  closed <- readMVar (_connClosed conn)
+  when closed $ do
+    ws_closeSocket (_connSocket conn)
+    putMVar (_connClosed conn) True
+    -- kill waiters
 
--- | Send a lazy 'ByteString' through the connection.
-sendBS :: ByteString -> ConnectionProcess ()
-sendBS bs = ProcessSend bs (return ())
-
-expectMessage :: ConnectionProcess Incoming
-expectMessage = ProcessExpect return
-
--- | Block and wait for a 'ByteString' to come from the connection.
-expectBS :: ConnectionProcess ByteString
-expectBS = undefined
-
-
--- | Returns the 'Connection' that the 'ConnectionProcess' is being run
--- with.
-selfConn :: ConnectionProcess Connection
-selfConn = ProcessRead return
-
--- | Forks a parallel 'ConnectionProcess' from another 'ConnectionProcess',
--- all referring to the same 'Connection'.  Nothing magical; uses 'forkIO',
--- so has all of the same semantics.  Returns the 'ThreadId'.
-forkProcess :: ConnectionProcess () -> ConnectionProcess ThreadId
-forkProcess k = ProcessFork k return
-
--- | Returns the origin (url) of the given 'Connection'.
-connOrigin :: Connection -> Text
-connOrigin = _connOrigin
-
--- | Returns if the given 'Connection' is a tagged channel.
-connTagged :: Connection -> Bool
-connTagged = _connTagged
-
--- Internal stuff
-
-popQueueFp :: TagFingerprint -> ConnectionProcess (Maybe ByteString)
-popQueueFp fp = do
-  tqsref <- _connTypeQueues <$> selfConn
-  tq <- M.lookup fp <$> liftIO (readMVar tqsref)
-  case tq of
-    Nothing  -> return Nothing
-    Just tqseq -> do
-      case viewl tqseq of
-        EmptyL -> return Nothing
-        a :< rest -> do
-          liftIO $ modifyMVar_ tqsref (return . M.insert fp rest)
-          return (Just a)
-
-queueUpFp :: TagFingerprint -> ByteString -> ConnectionProcess ()
-queueUpFp fp bs = do
-    tqsref <- _connTypeQueues <$> selfConn
-    liftIO $ modifyMVar_ tqsref (return . M.insertWith f fp (S.singleton bs))
+sendMessage :: Connection -> Outgoing -> IO ()
+sendMessage conn = ws_socketSend (_connSocket conn) . outgoingData
   where
-    f = flip (><)
+    outgoingData (OutgoingText t) = toJSString t
+    outgoingData (OutgoingData d) = toJSString (decodeUtf8 (toStrict d))
+
+send :: Sendable a => Connection -> a -> IO ()
+send conn = sendMessage conn . wrapSendable
 
 awaitMessage :: Connection -> IO Incoming
-awaitMessage conn@(Connection _ q w _ _ _) = do
-    msg <- ws_awaitConn q w
-    blb <- isBlob msg
-    if blb
-      then do
-        let blob = unsafeCoerce msg
-        readed <- fmap fromStrict <$> readBlob blob
-        case readed of
-          Just b -> return (IncomingBinary b)
-          Nothing -> awaitMessage conn
-      else do
-        let blob = unsafeCoerce msg :: JSString
-        return (IncomingText . fromJSString $ blob)
+awaitMessage conn = do
+  msg <- ws_awaitConn (_connQueue conn) (_connWaiters conn)
+  blb <- isBlob msg
+  if blb
+    then do
+      let blob = unsafeCoerce msg
+      readed <- fmap fromStrict <$> readBlob blob
+      case readed of
+        Just b -> return (IncomingData b)
+        Nothing -> awaitMessage conn
+    else do
+      let blob = unsafeCoerce msg :: JSString
+      return (IncomingText . fromJSString $ blob)
+
+awaitText_ :: Bool -> Connection -> IO Text
+awaitText_ = awaitQueue fi _connTextQueue _connDataQueue
+  where
+    fi (IncomingText t) = Right t
+    fi (IncomingData d) = Left d
+
+awaitByteString_ :: Bool -> Connection -> IO ByteString
+awaitByteString_ = awaitQueue fi _connDataQueue _connTextQueue
+  where
+    fi (IncomingData d) = Right d
+    fi (IncomingText t) = Left t
+
+awaitQueue ::
+       (Incoming -> Either b a)
+    -> (Connection -> MVar (Seq a))
+    -> (Connection -> MVar (Seq b))
+    -> (Bool -> Connection -> IO a)
+awaitQueue fi refa refb queue conn = do
+  queued <- popQueue (refa conn)
+  case queued of
+    Just x ->
+      return x
+    Nothing -> do
+      msg <- fi <$> awaitMessage conn
+      case msg of
+        Right x ->
+          return x
+        Left y  -> do
+          when queue $ pushQueue (refb conn) y
+          awaitQueue fi refa refb queue conn
+
+pushQueue :: MVar (Seq a) -> a -> IO ()
+pushQueue qref x = modifyMVar_ qref (return . (|> x))
+
+popQueue :: MVar (Seq a) -> IO (Maybe a)
+popQueue qref = do
+  q <- takeMVar qref
+  case viewl q of
+    EmptyL  ->
+      return Nothing
+    x :< xs -> do
+      putMVar qref xs
+      return (Just x)
