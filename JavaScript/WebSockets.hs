@@ -2,6 +2,9 @@ module JavaScript.WebSockets (
     Connection
   , Sendable
   , withUrl
+  , openConnection
+  , closeConnection
+  , send
   , receiveText
   , receiveData
   , receiveByteString

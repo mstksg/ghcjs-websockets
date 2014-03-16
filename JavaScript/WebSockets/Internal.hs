@@ -22,20 +22,22 @@ module JavaScript.WebSockets.Internal (
   , clearQueues
   ) where
 
-import Control.Applicative       ((<$>))
-import Control.Concurrent.MVar   (MVar, newMVar, readMVar, modifyMVar_, putMVar, takeMVar, swapMVar)
-import Control.Monad             (when, void)
-import Control.Spoon             (teaspoon)
-import Data.Binary               (Binary, encode, decode)
-import Data.ByteString.Lazy      (ByteString, fromStrict, toStrict)
-import Data.Sequence             as S
-import Data.Text as T            (Text, append, unpack)
-import Data.Text.Encoding        (decodeUtf8, encodeUtf8)
-import GHCJS.Foreign             (fromJSString, toJSString, newArray)
-import GHCJS.Types               (JSString)
-import JavaScript.Blob           (isBlob, readBlob)
+import Control.Applicative                   ((<$>))
+import Control.Concurrent.MVar               (MVar, newMVar, readMVar, modifyMVar_, putMVar, takeMVar, swapMVar)
+import Control.Monad                         (when, void)
+import Control.Spoon                         (teaspoon)
+import Data.Binary                           (Binary, encode, decode)
+import Data.ByteString.Lazy                  (ByteString, fromStrict, toStrict)
+import Data.Sequence                         as S
+import Data.Text as T                        (Text, append, unpack)
+import Debug.Trace
+import Data.Text.Encoding                    (decodeUtf8', encodeUtf8, decodeUtf8)
+import GHCJS.Foreign                         (fromJSString, toJSString, newArray)
+import GHCJS.Types                           (JSString)
+import JavaScript.Blob                       (isBlob, readBlob)
 import JavaScript.WebSockets.FFI
-import Unsafe.Coerce             (unsafeCoerce)
+import Unsafe.Coerce                         (unsafeCoerce)
+import qualified Data.ByteString.Base64.Lazy as B64
 
 data Connection = Connection { _connSocket     :: Socket
                              , _connQueue      :: ConnectionQueue
@@ -68,7 +70,7 @@ instance Binary a => Sendable a where
 
 instance Receivable Text where
     unwrapReceivable (IncomingText t) = Just t
-    unwrapReceivable (IncomingData d) = teaspoon . decodeUtf8 . toStrict $ d
+    unwrapReceivable (IncomingData d) = either (const Nothing) Just . decodeUtf8' . toStrict $ d
 
 instance Binary a => Receivable a where
     unwrapReceivable (IncomingText t) = teaspoon . decode . fromStrict . encodeUtf8 $ t
@@ -94,10 +96,17 @@ closeConnection conn = do
     -- kill waiters
 
 sendMessage :: Connection -> Outgoing -> IO ()
-sendMessage conn = ws_socketSend (_connSocket conn) . outgoingData
+sendMessage conn msg = do
+  closed <- readMVar (_connClosed conn)
+  if closed
+    then error . T.unpack $
+      "Attempting to send from closed websocket " `T.append` _connOrigin conn
+    else
+      ws_socketSend (_connSocket conn) (outgoingData msg)
   where
     outgoingData (OutgoingText t) = toJSString t
-    outgoingData (OutgoingData d) = toJSString (decodeUtf8 (toStrict d))
+    -- outgoingData (OutgoingData d) = toJSString . decodeUtf8 . toStrict . B64.encode $ d
+    outgoingData (OutgoingData d) = toJSString . decodeUtf8 . toStrict $ d
 
 send :: Sendable a => Connection -> a -> IO ()
 send conn = sendMessage conn . wrapSendable
