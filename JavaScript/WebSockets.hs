@@ -1,22 +1,23 @@
 module JavaScript.WebSockets (
     Connection
   , Sendable
+  , Incoming(..)
   , withUrl
   , openConnection
   , closeConnection
   , send
   , sendData
   , sendText
-  , receiveText
-  , receiveMaybe
+  , receiveMessage
+  , receiveEither
   , receive
-  , receiveByteString
-  , receiveDataEither
-  , receiveDataMaybe
+  , receiveText
   , receiveData
-  , clearTextQueue
-  , clearDataQueue
-  , clearQueues
+  , receiveMessage_
+  , receiveEither_
+  , receive_
+  , receiveText_
+  , receiveData_
   ) where
 
 import Control.Exception              (bracket)
@@ -31,28 +32,36 @@ withUrl url process = do
       (closeConnection)
       process
 
-sendData :: Binary a => Connection -> a -> IO ()
+sendData :: Binary a => Connection -> a -> IO Bool
 sendData = send
 
-sendText :: Connection -> Text -> IO ()
+sendText :: Connection -> Text -> IO Bool
 sendText = send
 
-receiveMaybe :: Receivable a => Connection -> IO (Maybe a)
-receiveMaybe = fmap (either (const Nothing) Just) . receiveEither
-
-receive :: Receivable a => Connection -> IO a
+receive :: Receivable a => Connection -> IO (Maybe a)
 receive conn = do
-  md <- receiveMaybe conn
-  case md of
-    Just d  -> return d
-    Nothing -> receive conn
+  d <- receiveEither conn
+  case d of
+    Nothing         -> return Nothing
+    Just (Right d') -> return (Just d')
+    Just _          -> receive conn
 
-receiveDataMaybe :: Binary a => Connection -> IO (Maybe a)
-receiveDataMaybe = fmap (either (const Nothing) Just) . receiveDataEither
+receiveText :: Connection -> IO (Maybe Text)
+receiveText = receive
 
-receiveData :: Binary a => Connection -> IO a
-receiveData conn = do
-  md <- receiveDataMaybe conn
-  case md of
-    Just d  -> return d
-    Nothing -> receiveData conn
+receiveData :: Binary a => Connection -> IO (Maybe a)
+receiveData = receive
+
+receive_ :: Receivable a => Connection -> IO a
+receive_ conn = do
+  d <- receiveEither_ conn
+  case d of
+    Right d' -> return d'
+    _        -> receive_ conn
+
+receiveText_ :: Connection -> IO Text
+receiveText_ = receive_
+
+receiveData_ :: Binary a => Connection -> IO a
+receiveData_ = receive_
+
