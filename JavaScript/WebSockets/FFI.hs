@@ -63,15 +63,16 @@ foreign import javascript interruptible  "if ($1.length > 0) {\
   ws_awaitConn :: ConnectionQueue -> ConnectionWaiters -> IO (JSRef ())
 
 
-foreign import javascript unsafe "if ($1.length > 0) {\
-                                    return $1.shift();\
-                                  } else {\
-                                    return null;\
-                                  }"
+foreign import javascript interruptible  "if ($1.length > 0) {\
+                                            $c($1.shift());\
+                                          } else {\
+                                            $c(null);\
+                                          }"
   ws_awaitConnClosed :: ConnectionQueue -> IO (JSRef ())
 
-foreign import javascript unsafe "for (var i = $1.length-1; i >= 0; i--) {\
-                                    $1[i](null);\
+foreign import javascript unsafe "while ($1.length > 0) {\
+                                    var w0 = $1.shift();\
+                                    w0(null);\
                                   };"
   ws_clearWaiters :: ConnectionWaiters -> IO ()
 

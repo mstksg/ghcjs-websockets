@@ -18,7 +18,7 @@ import qualified Data.Text.IO           as T
 main :: IO ()
 main = do
   print $ (B64.encode (encode (1 :: Int)))
-  conn <- openConnection "server-url"
+  conn <- openConnection "your-server"
   runningSum 0 conn
   block <- newEmptyMVar
   forkIO $ receiveMessage_ conn >>= putMVar block
@@ -38,7 +38,7 @@ runningSum n conn = do
   print (n + i)
   send conn (show (n+i))
   -- print . second (fmap B64.encode) =<< viewQueues conn
-  when ((n+1) < 100) $ runningSum (n + i) conn
+  when ((n+1) < 50) $ runningSum (n + i) conn
 
 echo :: Connection -> IO ()
 echo conn = do

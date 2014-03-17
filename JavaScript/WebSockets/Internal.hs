@@ -165,18 +165,20 @@ closeConnection = closeConnection_ False
 -- | Manually closes the given 'Connection'.  Will un-block all threads
 -- currently waiting on the 'Connection' for messages (releasing their
 -- callbacks) and disable sending and receiving in the future.  Also clears
--- the message queue on that 'Connection'.
+-- the message queue on that 'Connection' so no future retrievals will
+-- return anything.
 closeConnection' :: Connection -> IO ()
 closeConnection' = closeConnection_ True
 
 closeConnection_ :: Bool -> Connection -> IO ()
 closeConnection_ clr conn = do
-  closed <- readIORef (_connClosed conn)
-  unless closed . withMVar (_connBlock conn) . const $ do
-    writeIORef (_connClosed conn) True
-    ws_closeSocket (_connSocket conn)
-    ws_clearWaiters (_connWaiters conn)
-    when clr $ ws_clearQueue (_connQueue conn)
+  withMVar (_connBlock conn) . const $ do
+    closed <- readIORef (_connClosed conn)
+    unless closed $ do
+      writeIORef (_connClosed conn) True
+      ws_closeSocket (_connSocket conn)
+      ws_clearWaiters (_connWaiters conn)
+      when clr $ ws_clearQueue (_connQueue conn)
 
 -- | Clears the message queue (messages waiting to be 'receive'd) on the
 -- given 'Connection'.  Works on closed 'Connection's.
