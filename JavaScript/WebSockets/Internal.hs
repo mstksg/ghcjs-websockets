@@ -18,25 +18,27 @@ module JavaScript.WebSockets.Internal (
   , receiveText
   , receiveByteString
   , receiveDataEither
+  , receiveEither
   , clearTextQueue
   , clearDataQueue
   , clearQueues
+  , viewQueues
   ) where
 
-import Control.Applicative                   ((<$>))
-import Control.Concurrent.MVar               (MVar, newMVar, readMVar, modifyMVar_, putMVar, takeMVar, swapMVar)
-import Control.Monad                         (when, void)
-import Control.Spoon                         (teaspoon)
-import Data.Binary                           (Binary, encode, decode)
-import Data.ByteString.Lazy                  (ByteString, fromStrict, toStrict)
-import Data.Sequence                         as S
-import Data.Text as T                        (Text, append, unpack)
-import Data.Text.Encoding                    (decodeUtf8', encodeUtf8, decodeUtf8)
-import GHCJS.Foreign                         (fromJSString, toJSString, newArray)
-import GHCJS.Types                           (JSString)
-import JavaScript.Blob                       (isBlob, readBlob)
+import Control.Applicative       ((<$>))
+import Control.Concurrent.MVar   (MVar, newMVar, readMVar, modifyMVar_, putMVar, swapMVar, withMVar)
+import Control.Monad             (when, void)
+import Data.Binary               (Binary, encode, decodeOrFail)
+import Data.ByteString.Lazy      (ByteString, fromStrict, toStrict)
+import Data.Sequence as S        (Seq, viewl, (|>), ViewL(..), empty)
+import Data.Text as T            (Text, append, unpack)
+import Data.Text.Encoding        (decodeUtf8', encodeUtf8, decodeUtf8)
+import GHCJS.Foreign             (fromJSString, toJSString, newArray)
+import GHCJS.Types               (JSString)
+import JavaScript.Blob           (isBlob, readBlob)
 import JavaScript.WebSockets.FFI
-import Unsafe.Coerce                         (unsafeCoerce)
+import Unsafe.Coerce             (unsafeCoerce)
+
 import qualified Data.ByteString.Base64      as B64
 import qualified Data.ByteString.Base64.Lazy as B64L
 
@@ -74,9 +76,14 @@ instance Receivable Text where
     unwrapReceivable (IncomingData d) = either (const Nothing) Just . decodeUtf8' . toStrict $ d
 
 instance Binary a => Receivable a where
-    unwrapReceivable (IncomingText t) = teaspoon . decode . fromStrict . encodeUtf8 $ t
-    unwrapReceivable (IncomingData d) = teaspoon . decode $ d
-
+    unwrapReceivable inc =
+        case decodeOrFail bs of
+          Right (_,_,x) -> Just x
+          Left   _      -> Nothing
+      where
+        bs = case inc of
+               IncomingText t -> fromStrict (encodeUtf8 t)
+               IncomingData d -> d
 
 openConnection :: Text -> IO Connection
 openConnection url = do
@@ -139,8 +146,15 @@ receiveByteString = receiveQueue fi _connDataQueue _connTextQueue
     fi (IncomingData d) = Right d
     fi (IncomingText t) = Left t
 
-receiveDataEither :: forall a. Receivable a => Connection -> IO (Either Incoming a)
-receiveDataEither conn = unwrap <$> awaitMessage conn
+receiveDataEither :: Binary a => Connection -> IO (Either ByteString a)
+receiveDataEither = fmap unwrap . receiveByteString
+  where
+    unwrap bs = case decodeOrFail bs of
+                  Right (_,_,x) -> Right x
+                  Left   _      -> Left bs
+
+receiveEither :: forall a. Receivable a => Connection -> IO (Either Incoming a)
+receiveEither = fmap unwrap . awaitMessage
   where
     unwrap :: Incoming -> Either Incoming a
     unwrap msg = maybe (Left msg) Right (unwrapReceivable msg)
@@ -181,17 +195,23 @@ clearDataQueue :: Connection -> IO ()
 clearDataQueue = clearQueue . _connDataQueue
 
 clearQueue :: MVar (Seq a) -> IO ()
-clearQueue = void . flip swapMVar S.empty
+clearQueue = void . flip swapMVar empty
 
 pushQueue :: MVar (Seq a) -> a -> IO ()
 pushQueue qref x = modifyMVar_ qref (return . (|> x))
 
 popQueue :: MVar (Seq a) -> IO (Maybe a)
 popQueue qref = do
-  q <- takeMVar qref
-  case viewl q of
-    EmptyL  ->
-      return Nothing
-    x :< xs -> do
-      putMVar qref xs
-      return (Just x)
+  withMVar qref $ \q -> do
+    case viewl q of
+      EmptyL  ->
+        return Nothing
+      x :< xs -> do
+        putMVar qref xs
+        return (Just x)
+
+viewQueues :: Connection -> IO (Seq Text, Seq ByteString)
+viewQueues conn = do
+  tq <- readMVar (_connTextQueue conn)
+  dq <- readMVar (_connDataQueue conn)
+  return (tq, dq)
