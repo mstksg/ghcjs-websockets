@@ -1,26 +1,43 @@
 module JavaScript.WebSockets (
+  -- * Types
     Connection
-  , Sendable
-  , Incoming(..)
-  , withUrl
+  , WSSendable
+  , WSReceivable
+  , SocketMsg(..)
+  -- * Opening and closing connections
   , openConnection
   , closeConnection
+  , withUrl
+  -- * Sending data
+  -- ** With feedback
   , send
   , sendData
   , sendText
-  , receiveMessage
-  , receiveEither
+  , sendMessage
+  -- ** Without feedback
+  , send_
+  , sendData_
+  , sendText_
+  , sendMessage_
+  -- * Receiving data
+  -- ** Safe
   , receive
   , receiveText
   , receiveData
-  , receiveMessage_
-  , receiveEither_
+  , receiveMessage
+  , receiveEither
+  -- ** Unsafe
   , receive_
   , receiveText_
   , receiveData_
+  , receiveMessage_
+  , receiveEither_
+  -- * Exceptions
+  , ConnectionException(..)
   ) where
 
 import Control.Exception              (bracket)
+import Control.Monad                  (void)
 import Data.Binary                    (Binary)
 import Data.Text                      (Text)
 import JavaScript.WebSockets.Internal
@@ -29,7 +46,7 @@ withUrl :: Text -> (Connection -> IO a) -> IO a
 withUrl url process = do
     bracket
       (openConnection url)
-      (closeConnection)
+      closeConnection
       process
 
 sendData :: Binary a => Connection -> a -> IO Bool
@@ -38,7 +55,13 @@ sendData = send
 sendText :: Connection -> Text -> IO Bool
 sendText = send
 
-receive :: Receivable a => Connection -> IO (Maybe a)
+sendData_ :: Binary a => Connection -> a -> IO ()
+sendData_ conn = void . sendData conn
+
+sendText_ :: Connection -> Text -> IO ()
+sendText_ conn = void . sendText conn
+
+receive :: WSReceivable a => Connection -> IO (Maybe a)
 receive conn = do
   d <- receiveEither conn
   case d of
@@ -52,7 +75,7 @@ receiveText = receive
 receiveData :: Binary a => Connection -> IO (Maybe a)
 receiveData = receive
 
-receive_ :: Receivable a => Connection -> IO a
+receive_ :: WSReceivable a => Connection -> IO a
 receive_ conn = do
   d <- receiveEither_ conn
   case d of

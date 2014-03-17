@@ -34,11 +34,10 @@ foreign import javascript unsafe "$1.send(atob($2))" ws_socketSend :: Socket -> 
 foreign import javascript interruptible  "var ws = new WebSocket($1);\
                                           ws.onmessage = function(e) {\
                                             if (!(typeof e === 'undefined')) {\
-                                              if (window.ws_debug || true) {\
+                                              if (window.ws_debug) {\
                                                 console.log(e);\
                                               }\
                                               $2.push(e.data);\
-                                              console.log($3.length);\
                                               if ($3.length > 0) {\
                                                 var w0 = $3.shift();\
                                                 var e0 = $2.shift();\
@@ -51,15 +50,11 @@ foreign import javascript interruptible  "var ws = new WebSocket($1);\
                                           };"
   ws_newSocket :: JSString -> ConnectionQueue -> ConnectionWaiters -> IO Socket
 
-foreign import javascript interruptible  "console.log('awaiting');\
-                                          if ($1.length > 0) {\
-                                            console.log('taking');\
+foreign import javascript interruptible  "if ($1.length > 0) {\
                                             var d = $1.shift();\
                                             $c(d);\
                                           } else {\
-                                            console.log('pushing');\
                                             $2.push(function(d) {\
-                                              console.log('calling');\
                                               $c(d);\
                                             });\
                                           }"

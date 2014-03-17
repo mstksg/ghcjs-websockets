@@ -18,24 +18,27 @@ import qualified Data.Text.IO           as T
 main :: IO ()
 main = do
   print $ (B64.encode (encode (1 :: Int)))
-  conn <- openConnection "your-server"
+  conn <- openConnection "server-url"
+  runningSum 0 conn
   block <- newEmptyMVar
+  forkIO $ receiveMessage_ conn >>= putMVar block
+  closeConnection conn
+  print =<< takeMVar block
   -- receiveText conn
   -- receiveText conn
-  forkIO $ runningSum 0 conn
-  forkIO . forever $ echo conn
+  -- forkIO . forever $ echo conn
   -- forkIO . forever $ do
   --   threadDelay 2000000
   --   print . second (fmap B64.encode) =<< viewQueues conn
-  takeMVar block
 
 runningSum :: Int -> Connection -> IO ()
 runningSum n conn = do
-  putStrLn "waiting for number"
+  -- putStrLn "waiting for number"
   i <- receiveData_ conn
   print (n + i)
+  send conn (show (n+i))
   -- print . second (fmap B64.encode) =<< viewQueues conn
-  runningSum (n + i) conn
+  when ((n+1) < 100) $ runningSum (n + i) conn
 
 echo :: Connection -> IO ()
 echo conn = do
@@ -47,7 +50,7 @@ echo conn = do
 
 
 -- main :: IO ()
--- main = withUrl "ws://home.jle0.com:4270" $ \conn -> forever $ do
+-- main = withUrl "server-url" $ \conn -> forever $ do
 --   t <- receive conn
 --   T.putStrLn t
 

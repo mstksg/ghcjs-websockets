@@ -2,18 +2,21 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE IncoherentInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 
 module JavaScript.WebSockets.Internal (
     Connection
-  , Sendable
-  , Receivable
-  , Incoming(..)
-  , Outgoing(..)
+  , WSSendable
+  , WSReceivable
+  , SocketMsg(..)
+  , ConnectionException(..)
   , openConnection
   , closeConnection
+  , connectionClosed
   , sendMessage
+  , sendMessage_
   , send
+  , send_
   , receiveMessage
   , receiveMessage_
   , receiveEither
@@ -21,12 +24,14 @@ module JavaScript.WebSockets.Internal (
   ) where
 
 import Control.Applicative       ((<$>))
-import Control.Monad             (when)
+import Control.Exception         (Exception, throw)
+import Control.Monad             (unless, void)
 import Data.Binary               (Binary, encode, decodeOrFail)
 import Data.ByteString.Lazy      (ByteString, fromStrict, toStrict)
 import Data.IORef                (IORef, newIORef, readIORef, writeIORef)
 import Data.Text as T            (Text, unpack, append)
 import Data.Text.Encoding        (decodeUtf8', encodeUtf8, decodeUtf8)
+import Data.Typeable             (Typeable)
 import GHCJS.Foreign             (fromJSString, toJSString, newArray)
 import GHCJS.Types               (JSString, isNull)
 import JavaScript.Blob           (isBlob, readBlob)
@@ -43,42 +48,45 @@ data Connection = Connection { _connSocket     :: Socket
                              , _connClosed     :: IORef Bool
                              }
 
-data Incoming = IncomingText Text
-              | IncomingData ByteString
-              deriving (Show, Eq)
+data SocketMsg = SocketMsgText Text
+               | SocketMsgData ByteString
+               deriving (Show, Eq)
 
-data Outgoing = OutgoingText Text
-              | OutgoingData ByteString
-              deriving (Show, Eq)
+data ConnectionException = ConnectionClosed { _socketOrigin :: Text }
+                         deriving (Eq, Typeable)
 
-class Sendable s where
-    wrapSendable :: s -> Outgoing
+instance Show ConnectionException where
+    show (ConnectionClosed o) = T.unpack $ T.append "Error: Waiting on closed connection " o
+instance Exception ConnectionException
 
-class Receivable s where
-    unwrapReceivable :: Incoming -> Either Incoming s
+class WSSendable s where
+    wrapSendable :: s -> SocketMsg
 
-instance Sendable Text where
-    wrapSendable = OutgoingText
+class WSReceivable s where
+    unwrapReceivable :: SocketMsg -> Either SocketMsg s
 
-instance Binary a => Sendable a where
-    wrapSendable = OutgoingData . encode
+instance WSSendable Text where
+    wrapSendable = SocketMsgText
 
-instance Receivable Text where
-    unwrapReceivable (IncomingText t) = Right t
-    unwrapReceivable i@(IncomingData d) = f . decodeUtf8' . toStrict $ d
+instance Binary a => WSSendable a where
+    wrapSendable = SocketMsgData . encode
+
+instance WSReceivable Text where
+    unwrapReceivable (SocketMsgText t) = Right t
+    unwrapReceivable i@(SocketMsgData d) = f . decodeUtf8' . toStrict $ d
       where
         f (Right t) = Right t
         f _         = Left i
 
-instance Binary a => Receivable a where
+instance Binary a => WSReceivable a where
     unwrapReceivable inc =
         case decodeOrFail bs of
           Right (_,_,x) -> Right x
           Left   _      -> Left inc
       where
         bs = case inc of
-               IncomingText t -> fromStrict (encodeUtf8 t)
-               IncomingData d -> d
+               SocketMsgText t -> fromStrict (encodeUtf8 t)
+               SocketMsgData d -> d
 
 openConnection :: Text -> IO Connection
 openConnection url = do
@@ -91,12 +99,15 @@ openConnection url = do
 closeConnection :: Connection -> IO ()
 closeConnection conn = do
   closed <- readIORef (_connClosed conn)
-  when closed $ do
+  unless closed $ do
     ws_closeSocket (_connSocket conn)
     writeIORef (_connClosed conn) True
     ws_clearWaiters (_connWaiters conn)
 
-sendMessage :: Connection -> Outgoing -> IO Bool
+connectionClosed :: Connection -> IO Bool
+connectionClosed = readIORef . _connClosed
+
+sendMessage :: Connection -> SocketMsg -> IO Bool
 sendMessage conn msg = do
   closed <- readIORef (_connClosed conn)
   if closed
@@ -106,13 +117,19 @@ sendMessage conn msg = do
       ws_socketSend (_connSocket conn) (outgoingData msg)
       return True
   where
-    outgoingData (OutgoingText t) = toJSString . decodeUtf8 . B64.encode . encodeUtf8 $ t
-    outgoingData (OutgoingData d) = toJSString . decodeUtf8 . toStrict . B64L.encode $ d
+    outgoingData (SocketMsgText t) = toJSString . decodeUtf8 . B64.encode . encodeUtf8 $ t
+    outgoingData (SocketMsgData d) = toJSString . decodeUtf8 . toStrict . B64L.encode $ d
 
-send :: Sendable a => Connection -> a -> IO Bool
+sendMessage_ :: Connection -> SocketMsg -> IO ()
+sendMessage_ conn = void . sendMessage conn
+
+send :: WSSendable a => Connection -> a -> IO Bool
 send conn = sendMessage conn . wrapSendable
 
-receiveMessage :: Connection -> IO (Maybe Incoming)
+send_ :: WSSendable a => Connection -> a -> IO ()
+send_ conn = void . send conn
+
+receiveMessage :: Connection -> IO (Maybe SocketMsg)
 receiveMessage conn = do
   closed <- readIORef (_connClosed conn)
   if closed
@@ -130,20 +147,20 @@ receiveMessage conn = do
               let blob = unsafeCoerce msg
               readed <- fmap fromStrict <$> readBlob blob
               case readed of
-                Just b  -> return (Just (IncomingData b))
+                Just b  -> return (Just (SocketMsgData b))
                 Nothing -> receiveMessage conn
             else do
               let blob = unsafeCoerce msg :: JSString
-              return (Just . IncomingText . fromJSString $ blob)
+              return (Just . SocketMsgText . fromJSString $ blob)
 
-receiveMessage_ :: Connection -> IO Incoming
+receiveMessage_ :: Connection -> IO SocketMsg
 receiveMessage_ conn = unjust <$> receiveMessage conn
   where
     unjust (Just i ) = i
-    unjust Nothing  = error . T.unpack $ T.append "Waiting on closed connection " (_connOrigin conn)
+    unjust Nothing  = throw $ ConnectionClosed (_connOrigin conn)
 
-receiveEither :: Receivable a => Connection -> IO (Maybe (Either Incoming a))
+receiveEither :: WSReceivable a => Connection -> IO (Maybe (Either SocketMsg a))
 receiveEither = (fmap . fmap) unwrapReceivable . receiveMessage
 
-receiveEither_ :: Receivable a => Connection -> IO (Either Incoming a)
+receiveEither_ :: WSReceivable a => Connection -> IO (Either SocketMsg a)
 receiveEither_ = fmap unwrapReceivable . receiveMessage_

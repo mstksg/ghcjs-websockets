@@ -2,28 +2,29 @@ ghcjs-websockets
 ================
 
 *ghcjs-websockets* aims to provide a clean, idiomatic, efficient, low-level,
-out-of-your-way, concurrency-aware interface with minimal abstractions over
-the [Javascript Websockets API][jsapi], inspired on common Haskell idioms
-found in libraries like [io-stream][] and the server-side [websockets][]
-library, targeting compilation to Javascript with `ghcjs`.
+out-of-your-way, bare bones, concurrency-aware interface with minimal
+abstractions over the [Javascript Websockets API][jsapi], inspired on common
+Haskell idioms found in libraries like [io-stream][] and the server-side
+[websockets][] library, targeting compilation to Javascript with `ghcjs`.
 
-The interface abtracts websockets as simple IO/file handles, but also allows
+The interface abtracts websockets as simple IO/file handles, with additional
 access to the natively "typed" (text vs binary) nature of the Javascript
-Websockets API for the optional ability to treat a single websocket connection
-as a dual, "parallel" channel --- `Text` and `ByteString`/Serializable (with
-[binary][]) data.
+Websockets API.  There are also convenience functions to directly decode
+serialized data (serialized with [binary][]) sent through channels.
 
 The library is mostly intended to be a low-level FFI library, with the hopes
 that other, more advanced libraries maybe build on the low-level FFI bindings
-in order to provide more advanced and powerful abstractions.
+in order to provide more advanced and powerful abstractions.  Most design
+decisions were made with the intent of keeping things as simple as possible in
+order for future libraries to abstract over it.
 
 [jsapi]: http://www.w3.org/TR/2011/WD-websockets-20110419/
 [io-stream]: http://hackage.haskell.org/package/io-streams
 [websockets]: http://hackage.haskell.org/package/websockets
 [binary]: http://hackage.haskell.org/package/binary
 
-Examples
---------
+Demonstration
+-------------
 
 ```haskell
 import Data.Text (unpack)
@@ -32,13 +33,15 @@ import Data.Text (unpack)
 main :: IO ()
 main = withUrl "ws://my-server.com" $ \conn ->
     forever $ do
-        t <- receive conn
+        t <- receiveText_ conn
         putStrLn (unpack t)
-        sendText conn t
+        sendText_ conn t
 ```
 
 The above code will attempt to interpret all incoming data as UTF8-encoded
 Text, and throw away data that does not.
+
+`conn` is a `Connection`, which encapsulates a websocket channel.
 
 You can also do the same thing to interpret all incoming data as any instance
 of `Binary` --- say, `Int`s:
@@ -50,133 +53,88 @@ main = withUrl "ws://my-server.com" (runningSum 0)
 
 runningSum :: Int -> Connection -> IO ()
 runningSum n conn = do
-    i <- receive conn
+    i <- receiveData_ conn
     print (n + i)
     runningSum (n + i) conn
 ```
 
-`receive` will block until the `Connection` receives data that is decodable as
-an `Int`, throwing away all data otherwise.
+`receiveData_` will block until the `Connection` receives data that is
+decodable as whatever type you expect, and will throw away all nondecodable
+data (including `Text` data).
 
-However, in the native Javascript Websockets API, all data that comes in is
-"typed" as either Text or Data (Binary).  Why not take advantage of this, and
-treat them as two parallel streams?
+The `receive_` function is provided as a disgustingly over-indulgent and
+unnecessary layer of abstraction where you can receive both `Text` and
+instances of `Binary` with the same function using typeclass magic --- for the
+examples above, you could use `receive_` in place of both `receiveText_` and
+`receiveData_`.
 
-```haskell
-import Control.Concurrent.MVar   (newEmptyMVar, takeMVar)
+`send_` works the same way for `sendText_` and `sendData_`.
 
-main :: IO ()
-main = do
-  conn <- openConneciton "ws://my-server.com"
-  block <- newEmptyMVar
-  forkIO           $ runningSum 0 conn
-  forkIO . forever $ echo conn
-
-
-```
-
-
-
-
-*ghcjs-websockets* aims to provide an clean, idiomatic, *concurrent* Haskell
-interface abstracting over the Javascript Websockets API, targeting `ghcjs`
-for receiving serialized tagged and untagged data.
-
-The interface abstracts websockets as raw data streams and is designed to
-allow multiple styles of usage; in particular, is adapted for
-[io-stream][]-style usage and [distributed-process][]-style usage.  It is
-designed to fit in unintrusively in larger frameworks, and adaptable for other
-interfaces (like *pipes*).
-
-This library provides both *tagged* and *untagged* communication channels,
-using [tagged-binary][].
-
-* *Untagged* channels will throw away incoming binary data of unexpected type.
-
-* *Tagged* channels will queue up binary data of unexpected type to be
-  accessed later when data of that type is requested.
-
-Tagged channels mimic the behavior of [Cloud Haskell][] and
-[distributed-process][], with their dynamic communication channels.  You
-can use the same channel to send in polymorphic, typed data and deal with it
-at the time you wish.
-
-Some examples
--------------
-
-* Some *io-stream*-style usage.
+You can access the incoming data directly using the `SocketMsg` sum type:
 
 ```haskell
--- Echoes input from the server.
+import Data.Text (unpack, append)
+import qualified Data.ByteString.Base64.Lazy as B64
+
 main :: IO ()
-main = do
-    c <- openConnection "ws://server-url.com"
+main = withUrl "ws://my-server.com" $ \conn ->
     forever $ do
-        d <- withConn c expectText
-        putStrLn d
-        withConn c (sendText d)
-    closeConnection c
+        msg <- receiveMessage_
+        putStrLn $ case msg of
+            SocketMsgText t ->
+                unpack $ append "Received text: " t
+            SocketMsgData d ->
+                "Received data: " ++ show (B64.encode d)
 ```
 
-* Commands involving connections can be sequenced with a monadic interface.
+You can talk to multiple connections by nesting `withUrl`:
 
 ```haskell
--- Echoes input from the server.
+-- Act as a relay between two servers
 main :: IO ()
-main = withUrl "ws://server-url.com" . forever $ do
-    d <- expectText
-    liftIO $ putStrLn d
-    sendText d
+main =  withUrl "ws://server-1.com" $ \conn1 ->
+        withUrl "ws://server-2.com" $ \conn2 ->
+            forever $ do
+                msg <- receiveMessage_ conn1
+                sendMessage_ conn2 msg
 ```
 
-* Wait for incoming data only decodable as a desired type, and skip over
-  undecodable data.
+And also alternatively, you can manually open and close connections:
 
 ```haskell
--- Keep on printing all `Just` values received, and stop at the first
--- `Nothing`.
-whileJust :: ConnectionProcess ()
-whileJust = do
-    d <- expect
-    case d of
-      Just d' -> do
-          liftIO $ putStrLn d'
-          whileJust
-      Nothing ->
-          return ()
-```
-
-* Typed dynamic communication channels with [tagged-binary][]; channels
-  looking for a specific type skip over input of the wrong type, and channels
-  looking for the other type can pick them up later or in parallel.
-
-```haskell
--- Server emits `Int`s or `String`s randomly; launch two parallel threads
--- to catch the data as it comes in, one watching for `Int`s and one watching
--- for `String`s.  Note the `forkProcess` `ConnectionProcess` command.
+-- Act as a relay between two servers
 main :: IO ()
-main = withUrl "ws://server-url.com" $ do
-    block <- liftIO newEmptyMVar
-    forkProcess . forever $ do
-        n <- expectTagged
-        replicateM n . liftIO . putStrLn $ "got a number! " ++ show n
-    forkProcess . forever $ do
-        s <- expectTagged
-        liftIO $ putStrLn s
-    liftIO $ takeMVar block
+main = do
+    conn1 <- openConnection "ws://server-1.com"
+    conn2 <- openConnection "ws://server-2.com"
+    forever $ do
+        msg <- receiveMessage_ conn1
+        sendMessage_ conn2 msg
+    closeConnection conn2
+    closeConnection conn1
 ```
 
-There is still some functionality left to be desired; feel free to open a
-ticket and send in suggestions or bugs, and all pull requests are welcomed!
+If you're manually working with connections like that, then the "safe"
+non-underscore versions of `receive_`, `send_` are available.
+
+forall `X`, `receiveX` behaves exactly like `receiveX_`, except it returns
+`Maybe a` instead of `a`, and returns `Nothing` if the connection is closed or
+if it closes while it's blocking/waiting.  If you attempt to `receiveX_` on a
+closed connection or if the connection closes while you are waiting, a
+`ConnectionException` will be thrown.
+
+forall `X`, `sendX` behaves exactly like `sendX_`, except it returns `Bool`
+instead of `()`, where the `Bool` indicates if connection you are trying to
+send is open or not.  Trying to send message through a closed connection
+returns `False` (and nothing is ever sent) and trying on an open connection
+returns `True`.  This is different, technically, then checking if the message
+was sent at all, as other things might go wrong further down the line, or with
+the FFI API.  Hopefully stronger guarantees will be implemented in due time.
+
+You can use also `connectionClosed :: Connection -> IO Bool` to check if the
+given `Connection` object is closed.
 
 ### Copyright
 
 Copyright (c) Justin Le 2014
-
-
-[tagged-binary]: http://hackage.haskell.org/package/tagged-binary
-[io-stream]: http://hackage.haskell.org/package/io-streams
-[iostream]: http://hackage.haskell.org/package/io-streams
-[Cloud Haskell]: http://www.haskell.org/haskellwiki/Cloud_Haskell
-[distributed-process]: http://hackage.haskell.org/package/distributed-process
 
