@@ -26,7 +26,8 @@ module JavaScript.WebSockets.Internal (
   ) where
 
 import Control.Applicative       ((<$>))
-import Control.Concurrent.MVar   (MVar, newMVar, readMVar, modifyMVar_, putMVar, swapMVar, withMVar)
+import Control.Concurrent        (forkIO, ThreadId)
+import Control.Concurrent.MVar   (MVar, newMVar, readMVar, modifyMVar_, putMVar, swapMVar, withMVar, takeMVar, newEmptyMVar)
 import Control.Monad             (when, void)
 import Data.Binary               (Binary, encode, decodeOrFail)
 import Data.ByteString.Lazy      (ByteString, fromStrict, toStrict)
@@ -45,8 +46,13 @@ import qualified Data.ByteString.Base64.Lazy as B64L
 data Connection = Connection { _connSocket     :: Socket
                              , _connQueue      :: ConnectionQueue
                              , _connWaiters    :: ConnectionWaiters
-                             , _connTextQueue  :: MVar (Seq Text)
-                             , _connDataQueue  :: MVar (Seq ByteString)
+                             , _connAnyQueue   :: MVar (Seq (Incoming, MVar Bool))
+                             , _connTextQueue  :: MVar (Seq (Text, MVar Bool))
+                             , _connDataQueue  :: MVar (Seq (ByteString, MVar Bool))
+                             , _connWaitersAny  :: MVar (Seq (MVar Incoming))
+                             , _connWaitersText :: MVar (Seq (MVar Text))
+                             , _connWaitersData :: MVar (Seq (MVar ByteString))
+                             , _connWorker     :: Maybe ThreadId
                              , _connOrigin     :: Text
                              , _connClosed     :: MVar Bool
                              }
@@ -92,8 +98,13 @@ openConnection url = do
   socket <- ws_newSocket (toJSString url) queue waiters
   tq <- newMVar empty
   bq <- newMVar empty
+  wa <- newMVar empty
+  ta <- newMVar empty
+  da <- newMVar empty
   closed <- newMVar False
-  return $ Connection socket queue waiters tq bq url closed
+  let conn = Connection socket queue waiters tq bq wa ta da Nothing url closed
+  worker <- forkIO (workerThread conn)
+  return $ conn { _connWorker = Just worker }
 
 closeConnection :: Connection -> IO ()
 closeConnection conn = do
@@ -102,6 +113,25 @@ closeConnection conn = do
     ws_closeSocket (_connSocket conn)
     putMVar (_connClosed conn) True
     -- kill waiters
+
+workerThread :: Connection -> IO ()
+workerThread conn = do
+  msg <- awaitMessage conn
+  maw <- popQueue (_connWaitersAny conn)
+  case maw of
+    Just aw -> putMVar aw msg
+    Nothing ->
+      case msg of
+        IncomingText t -> do
+          mtw <- popQueue (_connWaitersText conn)
+          case mtw of
+            Just tw -> putMVar tw t
+            Nothing -> pushQueue (_connTextQueue conn) t
+        IncomingData d -> do
+          mdw <- popQueue (_connWaitersData conn)
+          case mdw of
+            Just dw -> putMVar dw d
+            Nothing -> pushQueue (_connDataQueue conn) d
 
 sendMessage :: Connection -> Outgoing -> IO ()
 sendMessage conn msg = do
@@ -135,16 +165,10 @@ awaitMessage conn = do
       return (IncomingText . fromJSString $ blob)
 
 receiveText :: Connection -> IO Text
-receiveText = receiveQueue fi _connTextQueue _connDataQueue
-  where
-    fi (IncomingText t) = Right t
-    fi (IncomingData d) = Left d
+receiveText = receiveQueue _connWaitersText _connTextQueue
 
 receiveByteString :: Connection -> IO ByteString
-receiveByteString = receiveQueue fi _connDataQueue _connTextQueue
-  where
-    fi (IncomingData d) = Right d
-    fi (IncomingText t) = Left t
+receiveByteString = receiveQueue _connWaitersData _connDataQueue
 
 receiveDataEither :: Binary a => Connection -> IO (Either ByteString a)
 receiveDataEither = fmap unwrap . receiveByteString
@@ -160,28 +184,23 @@ receiveEither = fmap unwrap . awaitMessage
     unwrap msg = maybe (Left msg) Right (unwrapReceivable msg)
 
 receiveQueue ::
-       (Incoming -> Either b a)
+       (Connection -> MVar (Seq (MVar a)))
     -> (Connection -> MVar (Seq a))
-    -> (Connection -> MVar (Seq b))
     -> (Connection -> IO a)
-receiveQueue fi refa refb conn = do
+receiveQueue wref qref conn = do
   closed <- readMVar (_connClosed conn)
   if closed
     then error . T.unpack $
       "Attempting to receive from closed websocket " `T.append` _connOrigin conn
     else do
-      queued <- popQueue (refa conn)
+      queued <- popQueue (qref conn)
       case queued of
         Just x ->
           return x
         Nothing -> do
-          msg <- fi <$> awaitMessage conn
-          case msg of
-            Right x ->
-              return x
-            Left y  -> do
-              pushQueue (refb conn) y
-              receiveQueue fi refa refb conn
+          waiter <- newEmptyMVar
+          pushQueue (wref conn) waiter
+          takeMVar waiter
 
 clearQueues :: Connection -> IO ()
 clearQueues conn = do
@@ -200,6 +219,11 @@ clearQueue = void . flip swapMVar empty
 pushQueue :: MVar (Seq a) -> a -> IO ()
 pushQueue qref x = modifyMVar_ qref (return . (|> x))
 
+pushQueueMarked :: MVar (Seq (a, MVar Bool)) -> a -> IO ()
+pushQueueMarked qref x = do
+  used <- newMVar False
+  pushQueue qref (x,used)
+
 popQueue :: MVar (Seq a) -> IO (Maybe a)
 popQueue qref = do
   withMVar qref $ \q -> do
@@ -209,6 +233,19 @@ popQueue qref = do
       x :< xs -> do
         putMVar qref xs
         return (Just x)
+
+popQueueMarked :: MVar (Seq (a, MVar Bool)) -> IO (Maybe a)
+popQueueMarked qref = do
+  popped <- popQueue qref
+  case popped of
+    Nothing -> return Nothing
+    Just (x, uref) -> do
+      used <- readMVar uref
+      if used
+        then
+          Just x <$ swapMVar used True
+        else
+          popQueueMarked qref
 
 viewQueues :: Connection -> IO (Seq Text, Seq ByteString)
 viewQueues conn = do
