@@ -18,7 +18,7 @@ import qualified Data.Text.IO           as T
 main :: IO ()
 main = do
   print $ (B64.encode (encode (1 :: Int)))
-  conn <- openConnection "ws://home.jle0.com:4270"
+  conn <- openConnection "your-server"
   block <- newEmptyMVar
   -- receiveText conn
   -- receiveText conn
