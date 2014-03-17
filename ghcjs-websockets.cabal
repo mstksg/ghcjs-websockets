@@ -115,19 +115,19 @@ source-repository head
 
 library
   exposed-modules:     JavaScript.WebSockets
+                     , JavaScript.WebSockets.Internal
   -- ghcjs-options: -O2
   -- other-modules:       
   -- other-extensions:    
   ghc-options:       -Wall
-  build-depends:     base ==4.7.*,
-                     ghcjs-base,
-                     transformers,
-                     tagged-binary >=0.1.2.0 && <0.2,
-                     binary,
-                     spoon,
-                     containers,
-                     bytestring,
-                     text
+  build-depends:     base ==4.7.*
+                   , ghcjs-base
+                   , transformers
+                   , binary
+                   , containers
+                   , bytestring
+                   , base64-bytestring
+                   , text
   -- hs-source-dirs:      
   default-language:    Haskell2010
 
@@ -135,12 +135,12 @@ executable ghcjs-websockets-test
   main-is: Test/Tests.hs
   ghc-options:       -O2
   default-language:  Haskell2010
-  build-depends:     base ==4.7.*,
-                     spoon,
-                     binary,
-                     bytestring,
-                     tagged-binary >=0.1.2.0 && <0.2,
-                     containers,
-                     ghcjs-base,
-                     transformers,
-                     text
+  build-depends:     base ==4.7.*
+                   , binary
+                   , bytestring
+                   , tagged-binary >=0.1.2.0 && <0.2
+                   , containers
+                   , base64-bytestring
+                   , ghcjs-base
+                   , transformers
+                   , text

@@ -1,93 +1,62 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DeriveFunctor #-}
 
 module Main where
 
-import Control.Applicative
+import Control.Arrow
 import Control.Concurrent
-import Control.Concurrent.MVar
+import Control.Concurrent.MVar          (newEmptyMVar, takeMVar)
 import Control.Monad
-import Control.Monad.IO.Class
-import Data.Binary
 import Data.Binary.Tagged
-import Data.Char
-import Data.Typeable
-import GHC.Generics
 import JavaScript.WebSockets
-import Numeric
-import qualified Data.ByteString      as B
-import qualified Data.ByteString.Lazy as L
-import qualified Data.Text            as T
-import qualified Data.Text.Encoding   as T
-import qualified Data.Text.IO         as T
-
-data BTree a = Empty | Node a (BTree a) (BTree a) deriving (Show, Typeable, Generic, Functor)
-
-toList :: BTree a -> [a]
-toList Empty = []
-toList (Node x t1 t2) = toList t1 ++ [x] ++ toList t2
-
-instance Binary a => Binary (BTree a)
-
-pBin :: L.ByteString -> IO ()
-pBin = putStrLn . concatMap (flip (showIntAtBase 2 intToDigit) "") . L.unpack
-
+import JavaScript.WebSockets.Internal
+import Data.Binary
+import Data.ByteString.Lazy (ByteString)
+import qualified Data.ByteString.Base64.Lazy as B64
+import qualified Data.Text              as T
+import qualified Data.Text.IO           as T
 
 main :: IO ()
 main = do
-  let x = encodeTagged (Empty :: BTree Int)
-  print (typeFingerprint (Empty :: BTree Int))
-  pBin x
-  print (bsFingerprint x)
-  print (decodeTagged x :: Maybe (BTree Int))
-
-
-  -- print (typeFingerprint (Empty :: BTree Int))
-
-  c <- openTaggedConnection "your-server"
-  -- withConn c ptest
+  print $ (B64.encode (encode (1 :: Int)))
+  conn <- openConnection "your-server"
   block <- newEmptyMVar
-  withConn c $ do
-    forkProcess . forever $ do
-      bs <- expectBS
-      liftIO . pBin $ bs
-      liftIO . print $ bsFingerprint bs
-    -- forkProcess . forever $ do
-    --   strs <- replicateM 2 expectTagged :: ConnectionProcess [BTree String]
-    --   let msg = "String trees sum to " ++ show (concat (concatMap toList strs))
-    --   liftIO $ putStrLn msg
-    --   sendText (T.pack msg)
-    -- forkProcess . forever $ do
-    --   ints <- replicateM 3 expectTagged :: ConnectionProcess [BTree Int]
-    --   let msg = "Integer trees concat to " ++ show (sum (concatMap toList ints))
-    --   liftIO $ putStrLn msg
-    --   sendText (T.pack msg)
+  -- receiveText conn
+  -- receiveText conn
+  forkIO $ runningSum 0 conn
+  forkIO . forever $ echo conn
+  -- forkIO . forever $ do
+  --   threadDelay 2000000
+  --   print . second (fmap B64.encode) =<< viewQueues conn
   takeMVar block
-  return ()
+
+runningSum :: Int -> Connection -> IO ()
+runningSum n conn = do
+  putStrLn "waiting for number"
+  i <- receiveData conn
+  print (n + i)
+  -- print . second (fmap B64.encode) =<< viewQueues conn
+  runningSum (n + i) conn
+
+echo :: Connection -> IO ()
+echo conn = do
+  threadDelay 500000
+  putStrLn "waiting for text"
+  t <- receiveText conn
+  print t
+  -- print . second (fmap B64.encode) =<< viewQueues conn
 
 
-ptest :: ConnectionProcess ()
-ptest = do
-  k <- (*2) <$> return 14
-  liftIO $ print k
-  e <- expect
-  liftIO $ T.putStrLn (T.decodeUtf8 e)
-  sendText "hello again"
-  sendText "how are you"
-  sendText "does this work?"
-  sendText "yes!"
+-- main :: IO ()
+-- main = withUrl "ws://home.jle0.com:4270" $ \conn -> forever $ do
+--   t <- receive conn
+--   T.putStrLn t
+
+
+  -- putStrLn "Hello world!"
+  -- c <- openConnection "ws://home.jle0.com:4270"
+  -- send c (encodeTagged ("hello" :: String))
   -- forever $ do
-  --   liftIO $ putStrLn "waiting for input:"
-  --   e  <- expect :: ConnectionProcess (BTree Int)
-  --   t1 <- expectTagged
-  --   liftIO $ print (t1 :: BTree Int)
-  --   t2 <- expectTagged
-  --   liftIO $ print (t2 :: BTree Int)
-  --   liftIO $ putStrLn "waiting showed"
-  --   t3 <- expectTagged
-  --   liftIO $ print (t3 :: BTree String)
-  return ()
+  --   t <- receive c
+  --   T.putStrLn t
 
 

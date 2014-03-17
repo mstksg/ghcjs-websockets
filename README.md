@@ -1,6 +1,83 @@
 ghcjs-websockets
 ================
 
+*ghcjs-websockets* aims to provide a clean, idiomatic, efficient, low-level,
+out-of-your-way, concurrency-aware interface with minimal abstractions over
+the [Javascript Websockets API][jsapi], inspired on common Haskell idioms
+found in libraries like [io-stream][] and the server-side [websockets][]
+library, targeting compilation to Javascript with `ghcjs`.
+
+The interface abtracts websockets as simple IO/file handles, but also allows
+access to the natively "typed" (text vs binary) nature of the Javascript
+Websockets API for the optional ability to treat a single websocket connection
+as a dual, "parallel" channel --- `Text` and `ByteString`/Serializable (with
+[binary][]) data.
+
+The library is mostly intended to be a low-level FFI library, with the hopes
+that other, more advanced libraries maybe build on the low-level FFI bindings
+in order to provide more advanced and powerful abstractions.
+
+[jsapi]: http://www.w3.org/TR/2011/WD-websockets-20110419/
+[io-stream]: http://hackage.haskell.org/package/io-streams
+[websockets]: http://hackage.haskell.org/package/websockets
+[binary]: http://hackage.haskell.org/package/binary
+
+Examples
+--------
+
+```haskell
+import Data.Text (unpack)
+
+-- A simple echo client, echoing all incoming text data
+main :: IO ()
+main = withUrl "ws://my-server.com" $ \conn ->
+    forever $ do
+        t <- receive conn
+        putStrLn (unpack t)
+        sendText conn t
+```
+
+The above code will attempt to interpret all incoming data as UTF8-encoded
+Text, and throw away data that does not.
+
+You can also do the same thing to interpret all incoming data as any instance
+of `Binary` --- say, `Int`s:
+
+```haskell
+-- A simple client waiting for connections and outputting the running sum
+main :: IO ()
+main = withUrl "ws://my-server.com" (runningSum 0)
+
+runningSum :: Int -> Connection -> IO ()
+runningSum n conn = do
+    i <- receive conn
+    print (n + i)
+    runningSum (n + i) conn
+```
+
+`receive` will block until the `Connection` receives data that is decodable as
+an `Int`, throwing away all data otherwise.
+
+However, in the native Javascript Websockets API, all data that comes in is
+"typed" as either Text or Data (Binary).  Why not take advantage of this, and
+treat them as two parallel streams?
+
+```haskell
+import Control.Concurrent.MVar   (newEmptyMVar, takeMVar)
+
+main :: IO ()
+main = do
+  conn <- openConneciton "ws://my-server.com"
+  block <- newEmptyMVar
+  forkIO           $ runningSum 0 conn
+  forkIO . forever $ echo conn
+
+
+```
+
+
+
+
 *ghcjs-websockets* aims to provide an clean, idiomatic, *concurrent* Haskell
 interface abstracting over the Javascript Websockets API, targeting `ghcjs`
 for receiving serialized tagged and untagged data.
@@ -99,6 +176,7 @@ Copyright (c) Justin Le 2014
 
 [tagged-binary]: http://hackage.haskell.org/package/tagged-binary
 [io-stream]: http://hackage.haskell.org/package/io-streams
+[iostream]: http://hackage.haskell.org/package/io-streams
 [Cloud Haskell]: http://www.haskell.org/haskellwiki/Cloud_Haskell
 [distributed-process]: http://hackage.haskell.org/package/distributed-process
 

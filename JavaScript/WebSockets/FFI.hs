@@ -28,12 +28,16 @@ type ConnectionQueue = JSArray Text
 type ConnectionWaiters = JSArray Waiter
 
 foreign import javascript unsafe "$1.close();" ws_closeSocket :: Socket -> IO ()
-foreign import javascript unsafe "$1.send($2)" ws_socketSend :: Socket -> JSString -> IO ()
+foreign import javascript unsafe "$1.send(atob($2))" ws_socketSend :: Socket -> JSString -> IO ()
 
 foreign import javascript interruptible  "var ws = new WebSocket($1);\
                                           ws.onmessage = function(e) {\
                                             if (!(typeof e === 'undefined')) {\
+                                              if (window.ws_debug || true) {\
+                                                console.log(e);\
+                                              }\
                                               $2.push(e.data);\
+                                              console.log($3.length);\
                                               if ($3.length > 0) {\
                                                 var w0 = $3.shift();\
                                                 var e0 = $2.shift();\
@@ -46,11 +50,15 @@ foreign import javascript interruptible  "var ws = new WebSocket($1);\
                                           };"
   ws_newSocket :: JSString -> ConnectionQueue -> ConnectionWaiters -> IO Socket
 
-foreign import javascript interruptible  "if ($1.length > 0) {\
+foreign import javascript interruptible  "console.log('awaiting');\
+                                          if ($1.length > 0) {\
+                                            console.log('taking');\
                                             var d = $1.shift();\
                                             $c(d);\
                                           } else {\
+                                            console.log('pushing');\
                                             $2.push(function(d) {\
+                                              console.log('calling');\
                                               $c(d);\
                                             });\
                                           }"
