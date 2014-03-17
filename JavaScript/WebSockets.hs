@@ -7,27 +7,14 @@
 -- Stability   : unstable
 -- Portability : portable
 --
--- 'JavaScript.WebSockets' aims to provide a clean, idiomatic, efficient,
--- low-level, out-of-your-way, bare bones, concurrency-aware interface with
--- minimal abstractions over the Javascript Websockets API
--- <http://www.w3.org/TR/2011/WD-websockets-20110419/>, inspired by common
--- Haskell idioms found in libraries like @io-stream@
--- <http://hackage.haskell.org/package/io-streams> and the server-side
--- @websockets@ <http://hackage.haskell.org/package/websockets> library,
--- targeting compilation to Javascript with @ghcjs@.
 --
--- The interface asbtracts websockets as simple IO/file handles, with
--- additional access to the natively "typed" (text vs binary) nature of the
--- Javascript Websockets API.  There are also convenience functions to
--- directly decode serialized data (serialized with @binary@
--- <http://hackage.haskell.org/package/binary>) sent through channels.
+-- 'JavaScript.WebSockets' contains functions and operations for working
+-- with Javascript Websocket connections, which are encapsulated in the
+-- 'Connection' object.
 --
--- The library is mostly intended to be a low-level FFI library, with the
--- hopes that other, more advanced libraries maybe build on the low-level
--- FFI bindings in order to provide more advanced and powerful
--- abstractions.  Most design decisions were made with the intent of
--- keeping things as simple as possible in order for future libraries to
--- abstract over it.
+-- It includes operations for opening, closing, inspecting connections and
+-- operations for sending and receiving text and serializable data
+-- (instances of 'Binary') through them.
 --
 -- Most of the necessary functionality is in hopefully in
 -- 'JavaScript.WebSockets'; more of the low-level API is exposed in
@@ -43,39 +30,50 @@ module JavaScript.WebSockets (
   , WSSendable
   , WSReceivable
   , SocketMsg(..)
-  -- * Opening and closing connections
+  -- * Opening, closing, and working with connections
+  , withUrl
   , openConnection
   , closeConnection
-  , withUrl
+  , closeConnection'
+  , clearConnectionQueue
+  , connectionClosed
+  , connectionOrigin
   -- * Sending data
   -- $sending
   -- ** With feedback
-  , send
   , sendData
   , sendText
   , sendMessage
+  , send
   -- ** Without feedback
-  , send_
   , sendData_
   , sendText_
   , sendMessage_
+  , send_
   -- * Receiving data
   -- $receiving
   -- ** Safe
-  , receive
   , receiveText
   , receiveData
   , receiveMessage
   , receiveEither
+  , receive
   -- ** Unsafe
-  , receive_
   , receiveText_
   , receiveData_
   , receiveMessage_
   , receiveEither_
+  , receive_
   -- * Exceptions
   , ConnectionException(..)
   ) where
+
+import Control.Exception              (bracket)
+import Control.Monad                  (void)
+import Data.Binary                    (Binary)
+import Data.Text                      (Text)
+import JavaScript.WebSockets.Internal
+
 
 -- $usage
 --
@@ -120,7 +118,8 @@ module JavaScript.WebSockets (
 -- 'send_' works the same way for 'sendText_' and 'sendData_'.
 --
 -- If you want to, you can access the incoming data directly using the
--- 'SocketMsg' sum type:
+-- 'SocketMsg' sum type, which exposes either a 'Text' or a lazy
+-- 'ByteString':
 --
 -- > import Data.Text (unpack, append)
 -- > import qualified Data.ByteString.Base64.Lazy as B64
@@ -180,17 +179,14 @@ module JavaScript.WebSockets (
 -- if the given 'Connection' object is closed.
 --
 
-import Control.Exception              (bracket)
-import Control.Monad                  (void)
-import Data.Binary                    (Binary)
-import Data.Text                      (Text)
-import JavaScript.WebSockets.Internal
-
+-- | Performs the given @Connection -> IO a@ process attached to the given
+-- server url.  Handles opening and closing the 'Connection' for you (and
+-- clearing the message queue afterwards), and cleans up on errors.
 withUrl :: Text -> (Connection -> IO a) -> IO a
 withUrl url process = do
     bracket
       (openConnection url)
-      closeConnection
+      closeConnection'
       process
 
 -- $sending
@@ -199,33 +195,92 @@ withUrl url process = do
 -- connection you just tried to send on is closed.  They all have
 -- @sendX_@ counterparts, which just return @IO ()@.
 
+-- | Send the given serializable (instance of 'Binary') data on the given
+-- connection.
+--
+-- Returns 'True' if the connection is open, and 'False' if it
+-- is closed.
 sendData :: Binary a => Connection -> a -> IO Bool
 sendData = send
 
+-- | Send the given (strict) 'Text' on the given connection.
+--
+-- Returns 'True' if the connection is open, and 'False' if it
+-- is closed.
 sendText :: Connection -> Text -> IO Bool
 sendText = send
 
+-- | Send the given serializable (instance of 'Binary') data on the given
+-- connection.
+--
+-- Fails silently if the connection is closed.
 sendData_ :: Binary a => Connection -> a -> IO ()
 sendData_ conn = void . sendData conn
 
+-- | Send the given (strict) 'Text' on the given connection.
+--
+-- Fails silently if the connection is closed.
 sendText_ :: Connection -> Text -> IO ()
 sendText_ conn = void . sendText conn
 
 -- $receiving
 --
 -- All @receiveX@ functions block until either the desired data is received
--- or the connection is closed.  They return immediately if the connection
--- is already closed.  They return @Just x@ on a successful retrieval on an
--- open connection and @Nothing@ on a closed connection.  They also come
--- with @receiveX_@ counterparts, which all return @x@ on successful
--- retrievals on an open connection and raise a 'ConnectionException' on
--- a closed connection.
+-- or the 'Connection' is closed.  They return immediately if the
+-- 'Connection' is already closed.  They return @Just x@ on a successful
+-- retrieval on an open 'Connection' and @Nothing@ if the 'Connection'
+-- closes while waiting, or if it is called on a closed 'Connection' with
+-- nothing left in its queue.
+--
+-- They also come with @receiveX_@ counterparts, which all return @x@ on
+-- successful retrievals on an open 'Connection' and raise
+-- a 'ConnectionException' on a closed 'Connection'
 --
 -- For most @receiveX@ functions (the exceptions being 'receiveMessage',
 -- which matches everything, and 'receiveEither', which returns @Left
 -- socketMsg@ on an unsuccessful parse), incoming data that does not match
 -- what you are looking for is discarded.
 
+-- | Block and wait until the 'Connection' receives a "typed" 'Text'.  This
+-- is determined by Javascript's own "typed" Websockets API
+-- <http://www.w3.org/TR/2011/WD-websockets-20110419/>, which receives data
+-- typed either as text or as a binary blob.  Returns @Just t@ on the first
+-- encountered text.  Returns @Nothing@ if the 'Connection' closes while it
+-- is waiting, or immediately if the connection is already closed and there
+-- are no queued messages left.
+--
+-- All "binary blobs" encountered are discarded.
+receiveText :: Connection -> IO (Maybe Text)
+receiveText = receive
+
+-- | Block and wait until the 'Connection' receives a "binary blob"
+-- decodable as the desired instance of 'Binary'.  Returns @Just x@ as soon
+-- as it is able to decode a blob, and @Nothing@ if the 'Connection' closes
+-- while it is waiting.  Returns @Nothing@ immediately if the 'Connection'
+-- is already closed and there are no queued messages left.
+--
+-- This is polymorphic on its return type, so remember to let the type
+-- inference system know what you want at some point or just give an
+-- explicit type signature --- @receiveData conn :: IO (Maybe Int)@, for
+-- example.
+receiveData :: Binary a => Connection -> IO (Maybe a)
+receiveData = receive
+
+-- | Block and wait until either something decodable as the desired type is
+-- received (returning @Just x@), or the 'Connection' closes (returning
+-- @Nothing@).  Returns @Nothing@ immediately if the 'Connection' is
+-- already closed and there are no queued messages left.
+--
+-- This is polymorphic on its return type, so remember to let the type
+-- inference system know what you want at some point or just give an
+-- explicit type signature --- @receiveData conn :: IO (Maybe Int)@, for
+-- example.
+--
+-- All non-decodable data that comes along is discarded.
+--
+-- You can 'receive' either (strict) 'Text' or any instance of 'Binary',
+-- due to over-indulgent typeclass magic; this is basically a function that
+-- works everywhere you would use 'receiveText' or 'receiveData'.
 receive :: WSReceivable a => Connection -> IO (Maybe a)
 receive conn = do
   d <- receiveEither conn
@@ -234,22 +289,56 @@ receive conn = do
     Just (Right d') -> return (Just d')
     Just _          -> receive conn
 
-receiveText :: Connection -> IO (Maybe Text)
-receiveText = receive
+-- | Block and wait until the 'Connection' receives a "typed" 'Text'.  This
+-- is determined by Javascript's own "typed" Websockets API
+-- <http://www.w3.org/TR/2011/WD-websockets-20110419/>, which receives data
+-- typed either as text or as a binary blob.  Returns the first encountered
+-- text.  Throws a 'ConnectionException' if the 'Connection' closes first,
+-- and throws one immediately if the connection is already closed and there
+-- are no queued messages left.
+--
+-- All "binary blobs" encountered are discarded.
+--
+-- For a "safe" version, see 'receive'.
+receiveText_ :: Connection -> IO Text
+receiveText_ = receive_
 
-receiveData :: Binary a => Connection -> IO (Maybe a)
-receiveData = receive
+-- | Block and wait until the 'Connection' receives a "binary blob"
+-- decodable as the desired instance of 'Binary'.  Returns the first
+-- succesfully decoded data, and throws a 'ConnectionException' if the
+-- 'Connection' closes first.  Throws the exception immediately if the
+-- 'Connection' is already closed and there are no queued messages left.
+--
+-- This is polymorphic on its return type, so remember to let the type
+-- inference system know what you want at some point or just give an
+-- explicit type signature --- @receiveData conn :: IO (Maybe Int)@, for
+-- example.
+--
+-- For a "safe" version, see 'receive'.
+receiveData_ :: Binary a => Connection -> IO a
+receiveData_ = receive_
 
+-- | Block and wait until either something decodable as the desired type is
+-- received (returning it), or the 'Connection' closes (throwing
+-- a 'ConnectionException').  Throws the exception immediately if the
+-- 'Connection' is already closed and there are no queued messages left.
+--
+-- This is polymorphic on its return type, so remember to let the type
+-- inference system know what you want at some point or just give an
+-- explicit type signature --- @receiveData conn :: IO (Maybe Int)@, for
+-- example.
+--
+-- All non-decodable data that comes along is discarded.
+--
+-- You can 'receive_' either (strict) 'Text' or any instance of 'Binary',
+-- due to over-indulgent typeclass magic; this is basically a function that
+-- works everywhere you would use 'receiveText_' or 'receiveData_'.
+--
+-- For a "safe" version, see 'receive'.
 receive_ :: WSReceivable a => Connection -> IO a
 receive_ conn = do
   d <- receiveEither_ conn
   case d of
     Right d' -> return d'
     _        -> receive_ conn
-
-receiveText_ :: Connection -> IO Text
-receiveText_ = receive_
-
-receiveData_ :: Binary a => Connection -> IO a
-receiveData_ = receive_
 

@@ -13,7 +13,9 @@ module JavaScript.WebSockets.FFI (
   , ws_closeSocket
   , ws_socketSend
   , ws_awaitConn
+  , ws_awaitConnClosed
   , ws_clearWaiters
+  , ws_clearQueue
   ) where
 
 import GHCJS.Types               (JSRef, JSArray, JSString)
@@ -60,7 +62,18 @@ foreign import javascript interruptible  "if ($1.length > 0) {\
                                           }"
   ws_awaitConn :: ConnectionQueue -> ConnectionWaiters -> IO (JSRef ())
 
+
+foreign import javascript unsafe "if ($1.length > 0) {\
+                                    return $1.shift();\
+                                  } else {\
+                                    return null;\
+                                  }"
+  ws_awaitConnClosed :: ConnectionQueue -> IO (JSRef ())
+
 foreign import javascript unsafe "for (var i = $1.length-1; i >= 0; i--) {\
                                     $1[i](null);\
-                                  }"
+                                  };"
   ws_clearWaiters :: ConnectionWaiters -> IO ()
+
+foreign import javascript unsafe "while ($1.length > 0) { $1.shift(); };"
+  ws_clearQueue :: ConnectionQueue -> IO ()

@@ -75,7 +75,7 @@ examples above, you could use `receive_` in place of both `receiveText_` and
 `send_` works the same way for `sendText_` and `sendData_`.
 
 If you want to, you can access the incoming data directly using the
-`SocketMsg` sum type:
+`SocketMsg` sum type, which exposes either a `Text` or a lazy `ByteString`:
 
 ```haskell
 import Data.Text (unpack, append)
