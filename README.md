@@ -3,11 +3,11 @@ ghcjs-websockets
 
 *ghcjs-websockets* aims to provide a clean, idiomatic, efficient, low-level,
 out-of-your-way, bare bones, concurrency-aware interface with minimal
-abstractions over the [Javascript Websockets API][jsapi], inspired on common
+abstractions over the [Javascript Websockets API][jsapi], inspired by common
 Haskell idioms found in libraries like [io-stream][] and the server-side
 [websockets][] library, targeting compilation to Javascript with `ghcjs`.
 
-The interface abtracts websockets as simple IO/file handles, with additional
+The interface abstracts websockets as simple IO/file handles, with additional
 access to the natively "typed" (text vs binary) nature of the Javascript
 Websockets API.  There are also convenience functions to directly decode
 serialized data (serialized with [binary][]) sent through channels.
@@ -18,13 +18,17 @@ in order to provide more advanced and powerful abstractions.  Most design
 decisions were made with the intent of keeping things as simple as possible in
 order for future libraries to abstract over it.
 
+Most of the necessary functionality is in hopefully in
+`JavaScript.WebSockets`; more of the low-level API is exposed in
+`JavaScript.WebSockets.Internal` if you need it for library construction.
+
 [jsapi]: http://www.w3.org/TR/2011/WD-websockets-20110419/
 [io-stream]: http://hackage.haskell.org/package/io-streams
 [websockets]: http://hackage.haskell.org/package/websockets
 [binary]: http://hackage.haskell.org/package/binary
 
-Demonstration
--------------
+Usage
+-----
 
 ```haskell
 import Data.Text (unpack)
@@ -70,7 +74,8 @@ examples above, you could use `receive_` in place of both `receiveText_` and
 
 `send_` works the same way for `sendText_` and `sendData_`.
 
-You can access the incoming data directly using the `SocketMsg` sum type:
+If you want to, you can access the incoming data directly using the
+`SocketMsg` sum type:
 
 ```haskell
 import Data.Text (unpack, append)
@@ -114,7 +119,7 @@ main = do
     closeConnection conn1
 ```
 
-If you're manually working with connections like that, then the "safe"
+If you're manually working with connections like that, then the "safe",
 non-underscore versions of `receive_`, `send_` are available.
 
 forall `X`, `receiveX` behaves exactly like `receiveX_`, except it returns
