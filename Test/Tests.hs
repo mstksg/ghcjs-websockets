@@ -32,7 +32,7 @@ main = do
 runningSum :: Int -> Connection -> IO ()
 runningSum n conn = do
   putStrLn "waiting for number"
-  i <- receiveData conn
+  i <- receiveData_ conn
   print (n + i)
   -- print . second (fmap B64.encode) =<< viewQueues conn
   runningSum (n + i) conn
@@ -41,7 +41,7 @@ echo :: Connection -> IO ()
 echo conn = do
   threadDelay 500000
   putStrLn "waiting for text"
-  t <- receiveText conn
+  t <- receiveText_ conn
   print t
   -- print . second (fmap B64.encode) =<< viewQueues conn
 

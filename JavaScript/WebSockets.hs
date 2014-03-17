@@ -8,11 +8,16 @@ module JavaScript.WebSockets (
   , send
   , sendData
   , sendText
+  , receiveMessage
   , receiveEither
-  , receiveMaybe
   , receive
   , receiveText
   , receiveData
+  , receiveMessage_
+  , receiveEither_
+  , receive_
+  , receiveText_
+  , receiveData_
   ) where
 
 import Control.Exception              (bracket)
@@ -27,24 +32,36 @@ withUrl url process = do
       (closeConnection)
       process
 
-sendData :: Binary a => Connection -> a -> IO ()
+sendData :: Binary a => Connection -> a -> IO Bool
 sendData = send
 
-sendText :: Connection -> Text -> IO ()
+sendText :: Connection -> Text -> IO Bool
 sendText = send
 
-receive :: Receivable a => Connection -> IO a
+receive :: Receivable a => Connection -> IO (Maybe a)
 receive conn = do
-  md <- receiveMaybe conn
-  case md of
-    Just d  -> return d
-    Nothing -> receive conn
+  d <- receiveEither conn
+  case d of
+    Nothing         -> return Nothing
+    Just (Right d') -> return (Just d')
+    Just _          -> receive conn
 
-receiveMaybe :: Receivable a => Connection -> IO (Maybe a)
-receiveMaybe = fmap (either (const Nothing) Just) . receiveEither
-
-receiveText :: Connection -> IO Text
+receiveText :: Connection -> IO (Maybe Text)
 receiveText = receive
 
-receiveData :: Binary a => Connection -> IO a
+receiveData :: Binary a => Connection -> IO (Maybe a)
 receiveData = receive
+
+receive_ :: Receivable a => Connection -> IO a
+receive_ conn = do
+  d <- receiveEither_ conn
+  case d of
+    Right d' -> return d'
+    _        -> receive_ conn
+
+receiveText_ :: Connection -> IO Text
+receiveText_ = receive_
+
+receiveData_ :: Binary a => Connection -> IO a
+receiveData_ = receive_
+
