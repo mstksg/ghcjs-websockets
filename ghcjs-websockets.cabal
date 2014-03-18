@@ -6,7 +6,7 @@ description:
                      efficient, low-level, out-of-your-way, bare bones,
                      concurrency-aware interface with minimal abstractions
                      over the Javascript Websockets API
-                     <http://www.w3.org/TR/2011/WD-websockets-20110419/>,
+                     <http://www.w3.org/TR/websockets/>,
                      inspired by common Haskell idioms found in libraries like
                      'io-stream'
                      <http://hackage.haskell.org/package/io-streams> and the

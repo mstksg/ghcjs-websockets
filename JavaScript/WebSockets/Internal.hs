@@ -9,6 +9,7 @@ module JavaScript.WebSockets.Internal (
   -- ** Data types
     Connection(..)
   , SocketMsg(..)
+  , ConnClosing(..)
   -- ** Typeclasses
   , WSSendable(..)
   , WSReceivable(..)
@@ -20,6 +21,7 @@ module JavaScript.WebSockets.Internal (
   , closeConnection'
   , clearConnectionQueue
   , connectionClosed
+  , connectionClosed'
   , connectionOrigin
   -- * Sending data
   -- ** With feedback
@@ -37,20 +39,25 @@ module JavaScript.WebSockets.Internal (
   , receiveEither_
   ) where
 
-import Control.Applicative       ((<$>))
+import Control.Applicative       ((<$>),(<*>))
+import Control.Concurrent        (forkIO)
+import Control.Concurrent.MVar   (MVar, newMVar, withMVar)
 import Control.Exception         (Exception, throw)
-import Control.Monad             (unless, void, when)
+import Control.Monad             (unless, void, when, join)
 import Data.Binary               (Binary, encode, decodeOrFail)
 import Data.ByteString.Lazy      (ByteString, fromStrict, toStrict)
 import Data.IORef                (IORef, newIORef, readIORef, writeIORef)
-import Control.Concurrent.MVar   (MVar, newMVar, withMVar)
+import Data.Maybe                (isJust, fromMaybe)
 import Data.Text as T            (Text, unpack, append)
 import Data.Text.Encoding        (decodeUtf8', encodeUtf8, decodeUtf8)
+import Data.Traversable          (mapM)
 import Data.Typeable             (Typeable)
-import GHCJS.Foreign             (fromJSString, toJSString, newArray)
+import GHCJS.Foreign             (fromJSString, toJSString, newArray, getPropMaybe, fromJSBool)
+import GHCJS.Marshal             (fromJSRef)
 import GHCJS.Types               (JSString, isNull)
 import JavaScript.Blob           (isBlob, readBlob)
 import JavaScript.WebSockets.FFI
+import Prelude hiding            (mapM)
 import Unsafe.Coerce             (unsafeCoerce)
 
 import qualified Data.ByteString.Base64      as B64
@@ -67,7 +74,7 @@ data Connection = Connection { _connSocket     :: Socket
                              , _connQueue      :: ConnectionQueue
                              , _connWaiters    :: ConnectionWaiters
                              , _connOrigin     :: Text
-                             , _connClosed     :: IORef Bool
+                             , _connClosed     :: IORef (Maybe ConnClosing)
                              , _connBlock      :: MVar ()
                              }
 
@@ -75,8 +82,8 @@ data Connection = Connection { _connSocket     :: Socket
 -- a JavaScript websocket.
 --
 -- What an incoming message is classified as depends on the Javascript
--- Websockets API <http://www.w3.org/TR/2011/WD-websockets-20110419/>,
--- which provides a "typed" input channel of either text or binary blob.
+-- Websockets API <http://www.w3.org/TR/websockets/>, which provides
+-- a "typed" input channel of either text or binary blob.
 --
 -- There are several convenience functions to help you never have to deal
 -- with this explicitly; its main purpose is if you want to explicitly
@@ -86,6 +93,23 @@ data Connection = Connection { _connSocket     :: Socket
 data SocketMsg = SocketMsgText Text
                | SocketMsgData ByteString
                deriving (Show, Eq, Typeable)
+
+-- | Data type containing information on 'Connection' closes.
+--
+-- *  'ManualClose': Closed by the Haskell 'JavaScript.WebSockets'
+--    interface, using 'closeConnection' or variants.
+--
+-- *  'JSClose': Closed on the Javascript end, either by a connection error
+--    or server request, or what have you.  Contains information from the
+--    Javascript Websockets API
+--    <http://www.w3.org/TR/websockets/#event-definitions>.
+data ConnClosing = ManualClose
+                 | JSClose { _jsCloseWasClean :: Bool
+                           , _jsCloseCode     :: Int
+                           , _jsCloseReason   :: Text
+                           }
+                  | UnknownClose
+                 deriving (Show, Eq)
 
 -- | An exception that may be thrown when using the various 'Connection'
 -- operations.  Right now, only includes 'ConnectionClosed', which is
@@ -144,12 +168,27 @@ instance Binary a => WSReceivable a where
 -- yourself.
 openConnection :: Text -> IO Connection
 openConnection url = do
-  queue <- newArray
+  queue   <- newArray
   waiters <- newArray
-  socket <- ws_newSocket (toJSString url) queue waiters
-  closed <- newIORef False
-  block <- newMVar ()
-  return $ Connection socket queue waiters url closed block
+  socket  <- ws_newSocket (toJSString url) queue waiters
+  closed  <- newIORef Nothing
+  block   <- newMVar ()
+  let conn = Connection socket queue waiters url closed block
+  _       <- forkIO $ handleClose conn
+  _       <- ws_handleOpen socket
+  return conn
+
+
+handleClose :: Connection -> IO ()
+handleClose conn = do
+    closeEvent <- ws_handleClose (_connSocket conn)
+    wasClean   <- fmap fromJSBool <$> getPropMaybe ("wasClean" :: Text) closeEvent
+    code       <- fmap join . mapM fromJSRef =<< getPropMaybe ("code" :: Text) closeEvent
+    reason     <- fmap fromJSString <$> getPropMaybe ("reason" :: Text) closeEvent
+    let jsClose = JSClose <$> wasClean <*> code <*> reason
+        cClose  = fromMaybe UnknownClose jsClose
+    closeConnection_ cClose False conn
+
 
 -- | Manually closes the given 'Connection'.  Will un-block all threads
 -- currently waiting on the 'Connection' for messages (releasing their
@@ -160,7 +199,7 @@ openConnection url = do
 -- manually clear the queue with 'clearConnectionQueue' or use
 -- 'closeConnection''.
 closeConnection :: Connection -> IO ()
-closeConnection = closeConnection_ False
+closeConnection = closeConnection_ ManualClose False
 
 -- | Manually closes the given 'Connection'.  Will un-block all threads
 -- currently waiting on the 'Connection' for messages (releasing their
@@ -168,14 +207,14 @@ closeConnection = closeConnection_ False
 -- the message queue on that 'Connection' so no future retrievals will
 -- return anything.
 closeConnection' :: Connection -> IO ()
-closeConnection' = closeConnection_ True
+closeConnection' = closeConnection_ ManualClose True
 
-closeConnection_ :: Bool -> Connection -> IO ()
-closeConnection_ clr conn = do
+closeConnection_ :: ConnClosing -> Bool -> Connection -> IO ()
+closeConnection_ cclsing clr conn = do
   withMVar (_connBlock conn) . const $ do
     closed <- readIORef (_connClosed conn)
-    unless closed $ do
-      writeIORef (_connClosed conn) True
+    unless (isJust closed) $ do
+      writeIORef (_connClosed conn) (Just cclsing)
       ws_closeSocket (_connSocket conn)
       ws_clearWaiters (_connWaiters conn)
       when clr $ ws_clearQueue (_connQueue conn)
@@ -185,10 +224,22 @@ closeConnection_ clr conn = do
 clearConnectionQueue :: Connection -> IO ()
 clearConnectionQueue = ws_clearQueue . _connQueue
 
--- | Check if the given 'Connection' is closed.
+-- | Check if the given 'Connection' is closed.  Returns a 'Bool'.  To
+-- check *why* it was closed, see 'connectionClosed''.
 connectionClosed :: Connection -> IO Bool
-connectionClosed conn = withMVar (_connBlock conn)
-                                 (const (readIORef (_connClosed conn)))
+connectionClosed = fmap isJust . connectionClosed'
+
+-- | Returns @Nothing@ if the given 'Connection' is still open, or @Just
+-- closing@ containing a 'ConnClosing' with information on why the
+-- connection was closed.
+--
+-- For just a 'Bool' saying whether or not the connection is closed, try
+-- 'connectionClosed'.
+connectionClosed' :: Connection -> IO (Maybe ConnClosing)
+connectionClosed' conn =
+  withMVar (_connBlock conn)
+    (const (readIORef (_connClosed conn)))
+
 
 -- | Returns the origin url of the given 'Connection'.
 connectionOrigin :: Connection -> Text

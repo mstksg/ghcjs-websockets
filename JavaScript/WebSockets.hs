@@ -30,6 +30,7 @@ module JavaScript.WebSockets (
   , WSSendable
   , WSReceivable
   , SocketMsg(..)
+  , ConnClosing(..)
   -- * Opening, closing, and working with connections
   , withUrl
   , openConnection
@@ -37,6 +38,7 @@ module JavaScript.WebSockets (
   , closeConnection'
   , clearConnectionQueue
   , connectionClosed
+  , connectionClosed'
   , connectionOrigin
   -- * Sending data
   -- $sending
@@ -243,11 +245,11 @@ sendText_ conn = void . sendText conn
 
 -- | Block and wait until the 'Connection' receives a "typed" 'Text'.  This
 -- is determined by Javascript's own "typed" Websockets API
--- <http://www.w3.org/TR/2011/WD-websockets-20110419/>, which receives data
--- typed either as text or as a binary blob.  Returns @Just t@ on the first
--- encountered text.  Returns @Nothing@ if the 'Connection' closes while it
--- is waiting, or immediately if the connection is already closed and there
--- are no queued messages left.
+-- <http://www.w3.org/TR/websockets/>, which receives data typed either as
+-- text or as a binary blob.  Returns @Just t@ on the first encountered
+-- text.  Returns @Nothing@ if the 'Connection' closes while it is waiting,
+-- or immediately if the connection is already closed and there are no
+-- queued messages left.
 --
 -- All "binary blobs" encountered are discarded.
 receiveText :: Connection -> IO (Maybe Text)
@@ -291,7 +293,7 @@ receive conn = do
 
 -- | Block and wait until the 'Connection' receives a "typed" 'Text'.  This
 -- is determined by Javascript's own "typed" Websockets API
--- <http://www.w3.org/TR/2011/WD-websockets-20110419/>, which receives data
+-- <http://www.w3.org/TR/websockets/>, which receives data
 -- typed either as text or as a binary blob.  Returns the first encountered
 -- text.  Throws a 'ConnectionException' if the 'Connection' closes first,
 -- and throws one immediately if the connection is already closed and there

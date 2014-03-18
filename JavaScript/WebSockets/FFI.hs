@@ -16,9 +16,11 @@ module JavaScript.WebSockets.FFI (
   , ws_awaitConnClosed
   , ws_clearWaiters
   , ws_clearQueue
+  , ws_handleOpen
+  , ws_handleClose
   ) where
 
-import GHCJS.Types               (JSRef, JSArray, JSString)
+import GHCJS.Types               (JSRef, JSArray, JSString, JSObject)
 import Data.Text                 (Text)
 
 data Socket_
@@ -30,8 +32,13 @@ type Waiter = JSRef Waiter_
 type ConnectionQueue = JSArray Text
 type ConnectionWaiters = JSArray Waiter
 
+type WSCloseEvent = JSObject ()
+
 foreign import javascript unsafe "$1.close();" ws_closeSocket :: Socket -> IO ()
 foreign import javascript unsafe "$1.send(atob($2))" ws_socketSend :: Socket -> JSString -> IO ()
+
+foreign import javascript interruptible "$1.onopen = function() { $c($1); };"
+  ws_handleOpen :: Socket -> IO Socket
 
 foreign import javascript interruptible  "var ws = new WebSocket($1);\
                                           ws.onmessage = function(e) {\
@@ -47,9 +54,7 @@ foreign import javascript interruptible  "var ws = new WebSocket($1);\
                                               }\
                                             }\
                                           };\
-                                          ws.onopen = function() {\
-                                            $c(ws);\
-                                          };"
+                                          $c(ws);"
   ws_newSocket :: JSString -> ConnectionQueue -> ConnectionWaiters -> IO Socket
 
 foreign import javascript interruptible  "if ($1.length > 0) {\
@@ -78,3 +83,6 @@ foreign import javascript unsafe "while ($1.length > 0) {\
 
 foreign import javascript unsafe "while ($1.length > 0) { $1.shift(); };"
   ws_clearQueue :: ConnectionQueue -> IO ()
+
+foreign import javascript interruptible  "$1.onclose = function (e) { $c(e); };"
+  ws_handleClose :: Socket -> IO WSCloseEvent
