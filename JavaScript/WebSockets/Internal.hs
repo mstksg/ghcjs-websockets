@@ -70,12 +70,12 @@ import qualified Data.ByteString.Base64.Lazy as B64L
 -- Care must be taken to close the connection once you are done if using
 -- 'openConnection', or unprocessed messages and callbacks will continue to
 -- queue up.
-data Connection = Connection { _connSocket     :: Socket
-                             , _connQueue      :: ConnectionQueue
-                             , _connWaiters    :: ConnectionWaiters
-                             , _connOrigin     :: Text
-                             , _connClosed     :: IORef (Maybe ConnClosing)
-                             , _connBlock      :: MVar ()
+data Connection = Connection { _connSocket     :: Socket                -- ^ JS Socket
+                             , _connQueue      :: ConnectionQueue       -- ^ JS Message queue
+                             , _connWaiters    :: ConnectionWaiters     -- ^ JS Listener queue
+                             , _connOrigin     :: Text                  -- ^ origin url
+                             , _connClosed     :: IORef (Maybe ConnClosing)   -- ^ Closed status/reason
+                             , _connBlock      :: MVar ()               -- ^ lock for handling
                              }
 
 -- | Sum type over the data that can be sent or received through
@@ -253,25 +253,26 @@ connectionOrigin = _connOrigin
 -- is closed.
 sendMessage :: Connection -> SocketMsg -> IO Bool
 sendMessage conn msg = do
-  putStrLn "hey"
+  -- putStrLn "hey"
   closed <- connectionClosed conn
-  putStrLn "yo"
+  -- putStrLn "yo"
   if closed
     then do
-      putStrLn "go"
+      -- putStrLn "go"
       return False
     else do
-      putStrLn "po"
-      print $ outgoingData' (SocketMsgData "hello")
-      putStrLn "ah"
+      -- putStrLn "po"
+      -- print $ outgoingData' (SocketMsgData "hello")
+      -- putStrLn "ah"
+      -- TODO: Validate send here
       ws_socketSend (_connSocket conn) (outgoingData msg)
-      putStrLn "no"
+      -- putStrLn "no"
       return True
   where
     outgoingData (SocketMsgText t) = toJSString . decodeUtf8 . B64.encode . encodeUtf8 $ t
     outgoingData (SocketMsgData d) = toJSString . decodeUtf8 . toStrict . B64L.encode $ d
-    outgoingData' (SocketMsgText t) = B64.encode . encodeUtf8 $ t
-    outgoingData' (SocketMsgData d) = toStrict . B64L.encode $ d
+    -- outgoingData' (SocketMsgText t) = B64.encode . encodeUtf8 $ t
+    -- outgoingData' (SocketMsgData d) = toStrict . B64L.encode $ d
 
 
 -- | Sends the given 'SocketMsg' through the given 'Connection'.
@@ -314,6 +315,7 @@ send_ conn = void . send conn
 receiveMessage :: Connection -> IO (Maybe SocketMsg)
 receiveMessage conn = do
   closed <- connectionClosed conn
+  -- TODO: handle async here.  Github issue #1
   msg <- if closed
            then ws_awaitConnClosed (_connQueue conn)
            else ws_awaitConn (_connQueue conn) (_connWaiters conn)

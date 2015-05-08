@@ -1,4 +1,5 @@
 .cabal-sandbox
+cabal.sandbox.config
 .shake
 dist
 node_modules

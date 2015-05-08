@@ -36,7 +36,7 @@ type ConnectionWaiters = JSArray Waiter
 type WSCloseEvent = JSObject ()
 
 foreign import javascript unsafe "$1.close();" ws_closeSocket :: Socket -> IO ()
-foreign import javascript unsafe "console.log('hey'); console.log(atob($2)); $1.send(atob($2))" ws_socketSend :: Socket -> JSString -> IO ()
+foreign import javascript unsafe "$1.send(atob($2));" ws_socketSend :: Socket -> JSString -> IO ()
 
 foreign import javascript interruptible "$1.onopen = function() { $c($1); };"
   ws_handleOpen :: Socket -> IO Socket
@@ -46,7 +46,7 @@ foreign import javascript interruptible  "var ws = new WebSocket($1);\
                                             if (!(typeof e === 'undefined')) {\
                                               if (window.ws_debug) {\
                                                 console.log(e);\
-                                              }\
+                                              };\
                                               $2.push(e.data);\
                                               if ($3.length > 0) {\
                                                 var w0 = $3.shift();\

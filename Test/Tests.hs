@@ -16,24 +16,54 @@ import qualified Data.Text              as T
 import qualified Data.Text.IO           as T
 
 main :: IO ()
-main = do
-  print $ (B64.encode (encode (1 :: Int)))
-  conn <- openConnection "ws://home.jle0.com:4270"
-  let simpmess = SocketMsgData (encode ("hello" :: String))
-  print (encode ("hello" :: String))
-  sendMessage conn (SocketMsgData "hello")
-  runningSum 0 conn
-  putStrLn "closing up"
-  block <- newEmptyMVar
-  forkIO $ receiveMessage_ conn >>= putMVar block
-  closeConnection conn
-  print =<< takeMVar block
-  -- receiveText conn
-  -- receiveText conn
-  -- forkIO . forever $ echo conn
-  -- forkIO . forever $ do
-  --   threadDelay 2000000
-  --   print . second (fmap B64.encode) =<< viewQueues conn
+main = withUrl "ws://home.jle0.com:4270" $ \conn -> do
+    forkIO $ runningSum 0 conn
+    forkIO $ forM_ [1..30] $ \i -> do
+      threadDelay 1000000
+      sendMessage conn $ SocketMsgData (encode (i :: Int))
+    forever $
+      threadDelay 1000000000
+
+    -- forever $ do
+    --   threadDelay 1000000
+    --   putStrLn "sending"
+    --   sendData_ conn (encode (1 :: Int))
+    --   threadDelay 1000000
+    --   m <- receiveData conn :: IO (Maybe Int)
+    --   print m
+
+      -- sendText conn "hello"
+      -- threadDelay 1000000
+      -- m <- receiveMessage conn
+      -- print m
+      -- t <- receiveText_ conn
+      -- t <- receiveText_ conn
+      -- T.putStrLn t
+
+
+
+-- main :: IO ()
+-- main = do
+--   print $ B64.encode (encode (1 :: Int))
+--   conn <- openConnection "ws://home.jle0.com:4270"
+--   let simpmess = SocketMsgData (encode ("hello" :: String))
+--   print (encode ("hello" :: String))
+--   sendMessage conn (SocketMsgData "hello")
+--   i <- receiveData_ conn
+--   putStrLn i
+
+  -- -- runningSum 0 conn
+  -- -- putStrLn "closing up"
+  -- block <- newEmptyMVar :: IO (MVar ())
+  -- -- forkIO $ receiveMessage_ conn >>= putMVar block
+  -- -- closeConnection conn
+  -- print =<< takeMVar block
+  -- -- receiveText conn
+  -- -- receiveText conn
+  -- -- forkIO . forever $ echo conn
+  -- -- forkIO . forever $ do
+  -- --   threadDelay 2000000
+  -- --   print . second (fmap B64.encode) =<< viewQueues conn
 
 runningSum :: Int -> Connection -> IO ()
 runningSum n conn = do
