@@ -253,16 +253,26 @@ connectionOrigin = _connOrigin
 -- is closed.
 sendMessage :: Connection -> SocketMsg -> IO Bool
 sendMessage conn msg = do
+  putStrLn "hey"
   closed <- connectionClosed conn
+  putStrLn "yo"
   if closed
-    then
+    then do
+      putStrLn "go"
       return False
     else do
+      putStrLn "po"
+      print $ outgoingData' (SocketMsgData "hello")
+      putStrLn "ah"
       ws_socketSend (_connSocket conn) (outgoingData msg)
+      putStrLn "no"
       return True
   where
     outgoingData (SocketMsgText t) = toJSString . decodeUtf8 . B64.encode . encodeUtf8 $ t
     outgoingData (SocketMsgData d) = toJSString . decodeUtf8 . toStrict . B64L.encode $ d
+    outgoingData' (SocketMsgText t) = B64.encode . encodeUtf8 $ t
+    outgoingData' (SocketMsgData d) = toStrict . B64L.encode $ d
+
 
 -- | Sends the given 'SocketMsg' through the given 'Connection'.
 -- A 'SocketMsg' is a sum type of either 'SocketMsgText t', containing
@@ -315,10 +325,8 @@ receiveMessage conn = do
       if blb
         then do
           let blob = unsafeCoerce msg
-          readed <- fmap fromStrict <$> readBlob blob
-          case readed of
-            Just b  -> return (Just (SocketMsgData b))
-            Nothing -> receiveMessage conn
+          readed <- fromStrict <$> readBlob blob
+          return (Just (SocketMsgData readed))
         else do
           let blob = unsafeCoerce msg :: JSString
           return (Just . SocketMsgText . fromJSString $ blob)

@@ -18,8 +18,12 @@ import qualified Data.Text.IO           as T
 main :: IO ()
 main = do
   print $ (B64.encode (encode (1 :: Int)))
-  conn <- openConnection "your-server"
+  conn <- openConnection "ws://home.jle0.com:4270"
+  let simpmess = SocketMsgData (encode ("hello" :: String))
+  print (encode ("hello" :: String))
+  sendMessage conn (SocketMsgData "hello")
   runningSum 0 conn
+  putStrLn "closing up"
   block <- newEmptyMVar
   forkIO $ receiveMessage_ conn >>= putMVar block
   closeConnection conn
@@ -33,10 +37,10 @@ main = do
 
 runningSum :: Int -> Connection -> IO ()
 runningSum n conn = do
-  -- putStrLn "waiting for number"
+  putStrLn "waiting for number"
   i <- receiveData_ conn
   print (n + i)
-  send conn (show (n+i))
+  -- send conn (show (n+i))
   -- print . second (fmap B64.encode) =<< viewQueues conn
   when ((n+1) < 50) $ runningSum (n + i) conn
 

@@ -18,6 +18,7 @@ module JavaScript.WebSockets.FFI (
   , ws_clearQueue
   , ws_handleOpen
   , ws_handleClose
+  , js_consolelog
   ) where
 
 import GHCJS.Types               (JSRef, JSArray, JSString, JSObject)
@@ -35,7 +36,7 @@ type ConnectionWaiters = JSArray Waiter
 type WSCloseEvent = JSObject ()
 
 foreign import javascript unsafe "$1.close();" ws_closeSocket :: Socket -> IO ()
-foreign import javascript unsafe "$1.send(atob($2))" ws_socketSend :: Socket -> JSString -> IO ()
+foreign import javascript unsafe "console.log('hey'); console.log(atob($2)); $1.send(atob($2))" ws_socketSend :: Socket -> JSString -> IO ()
 
 foreign import javascript interruptible "$1.onopen = function() { $c($1); };"
   ws_handleOpen :: Socket -> IO Socket
@@ -86,3 +87,5 @@ foreign import javascript unsafe "while ($1.length > 0) { $1.shift(); };"
 
 foreign import javascript interruptible  "$1.onclose = function (e) { $c(e); };"
   ws_handleClose :: Socket -> IO WSCloseEvent
+
+foreign import javascript unsafe "console.log($1)" js_consolelog :: JSRef a -> IO ()
