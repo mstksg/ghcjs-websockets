@@ -1,1 +1,4 @@
 dump queue on close, disallow listens.
+
+consider thread safety on js end
+-- considered and done.  no interleaving, atomicity assumed

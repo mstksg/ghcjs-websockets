@@ -316,6 +316,20 @@ receiveMessage :: Connection -> IO (Maybe SocketMsg)
 receiveMessage conn = do
   closed <- connectionClosed conn
   -- TODO: handle async here.  Github issue #1
+  -- I see what's gon on here.  With `ws_awaitConn`, all it does is drop
+  -- a callback onto a queue.  and then when the next message comes in, the
+  -- socket callback will "call" the message in order to trigger this to
+  -- unblock.
+  --
+  -- how to fix this?  maybe some way to un-add this from the queue?  most
+  -- likely not.
+  --
+  -- maybe use a chan and abstract?  might be too much abstraction.
+  --
+  -- well at least we've gotten to the bottom of this.
+  --
+  -- suggested solution: `onException` from Control.Exception
+  --
   msg <- if closed
            then ws_awaitConnClosed (_connQueue conn)
            else ws_awaitConn (_connQueue conn) (_connWaiters conn)
