@@ -44,7 +44,7 @@ module JavaScript.WebSockets.Internal (
 import Control.Applicative
 import Control.Concurrent
 import Control.Exception
-import Control.Monad             (void, join, unless, when)
+import Control.Monad             (void, join, when)
 import Data.Binary               (Binary, encode, decodeOrFail)
 import Data.ByteString.Lazy      (ByteString, fromStrict, toStrict)
 import Data.IORef                (IORef, newIORef, readIORef, writeIORef)
@@ -385,23 +385,11 @@ receiveMessage conn = do
   if closed
     then return Nothing
     else do
-      waiterDead <- toJSBool False
-      msg <- ws_awaitConn (_connQueue conn) (_connWaiters conn) waiterDead
+      waiterKilled <- newObj
+              -- set to ignore waiter if thread has died
+      msg <- ws_awaitConn (_connQueue conn) (_connWaiters conn) waiterKilled
+              `onException` setProp ("k" :: JSString) jsTrue waiterKilled
       loadJSMessage msg
-  -- TODO: handle async here.  Github issue #1
-  -- I see what's gon on here.  With `ws_awaitConn`, all it does is drop
-  -- a callback onto a queue.  and then when the next message comes in, the
-  -- socket callback will "call" the message in order to trigger this to
-  -- unblock.
-  --
-  -- how to fix this?  maybe some way to un-add this from the queue?  most
-  -- likely not.
-  --
-  -- maybe use a chan and abstract?  might be too much abstraction.
-  --
-  -- well at least we've gotten to the bottom of this.
-  --
-  -- suggested solution: `onException` from Control.Exception
 
 loadJSMessage :: JSRef a -> IO (Maybe SocketMsg)
 loadJSMessage msg | isNull msg = return Nothing

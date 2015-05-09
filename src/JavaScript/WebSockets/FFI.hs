@@ -9,7 +9,7 @@ module JavaScript.WebSockets.FFI (
   , Waiter
   , ConnectionQueue
   , ConnectionWaiters
-  , WaiterDead
+  , WaiterKilled
     -- * FFI
   , ws_newSocket
   , ws_closeSocket
@@ -20,7 +20,6 @@ module JavaScript.WebSockets.FFI (
   , ws_handleOpen
   , ws_handleClose
   , ws_readyState
-  , js_consolelog
   ) where
 
 import Data.Text   (Text)
@@ -32,7 +31,7 @@ type Socket = JSRef Socket_
 data Waiter_
 type Waiter = JSRef Waiter_
 
-type WaiterDead = JSBool
+type WaiterKilled = JSObject JSBool
 
 type ConnectionQueue = JSArray Text
 type ConnectionWaiters = JSArray Waiter
@@ -53,10 +52,16 @@ foreign import javascript unsafe  "var ws = new WebSocket($1);\
                                        };\
                                        $2.push(e.data);\
                                        if ($3.length > 0) {\
-                                         var w0 = $3.shift();\
                                          var e0 = $2.shift();\
-                                         w0(e0);\
-                                       }\
+                                         var found = false;\
+                                         while ($3.length > 0 && !found) {\
+                                           var w0 = $3.shift();\
+                                           found = w0(e0);\
+                                         };\
+                                         if (!found) {\
+                                           $2.unshift(e0);\
+                                         };\
+                                       };\
                                      }\
                                    };\
                                    $r = ws;"
@@ -67,7 +72,7 @@ foreign import javascript interruptible  "if ($1.length > 0) {\
                                             $c(d);\
                                           } else {\
                                             $2.push(function(d) {\
-                                              if ($3) {\
+                                              if ($3.k) {\
                                                 return false;\
                                               } else {\
                                                 $c(d);\
@@ -75,7 +80,7 @@ foreign import javascript interruptible  "if ($1.length > 0) {\
                                               };\
                                             });\
                                           }"
-  ws_awaitConn :: ConnectionQueue -> ConnectionWaiters -> WaiterDead -> IO (JSRef ())
+  ws_awaitConn :: ConnectionQueue -> ConnectionWaiters -> WaiterKilled -> IO (JSRef ())
 
 foreign import javascript unsafe "while ($1.length > 0) {\
                                     var w0 = $1.shift();\
@@ -91,6 +96,3 @@ foreign import javascript interruptible  "$1.onclose = function (e) { $c(e); };"
 
 foreign import javascript unsafe "$1.readyState"
   ws_readyState :: Socket -> IO Int
-
-foreign import javascript unsafe "console.log($1)"
-  js_consolelog :: JSRef a -> IO ()
