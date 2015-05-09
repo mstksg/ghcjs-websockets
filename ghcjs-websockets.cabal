@@ -99,7 +99,6 @@ library
                      , bytestring
                      , containers
                      , ghcjs-base
-                     , ghcjs-prim
                      , primitive
                      , text
   hs-source-dirs:      src

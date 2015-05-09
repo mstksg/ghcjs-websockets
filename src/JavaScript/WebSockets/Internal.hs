@@ -21,6 +21,7 @@ module JavaScript.WebSockets.Internal (
   , closeConnection
   , closeConnectionLeftovers
   , clearConnectionQueue
+  , dumpConnectionQueue
   , connectionClosed
   , connectionCloseReason
   , connectionOrigin
@@ -41,10 +42,9 @@ module JavaScript.WebSockets.Internal (
   ) where
 
 import Control.Applicative
-import Control.Concurrent        (forkIO)
-import Control.Concurrent.MVar   (MVar, newMVar, withMVar)
-import Control.Exception         (Exception, throw)
-import Control.Monad             (void, join)
+import Control.Concurrent
+import Control.Exception
+import Control.Monad             (void, join, unless, when)
 import Data.Binary               (Binary, encode, decodeOrFail)
 import Data.ByteString.Lazy      (ByteString, fromStrict, toStrict)
 import Data.IORef                (IORef, newIORef, readIORef, writeIORef)
@@ -53,9 +53,8 @@ import Data.Text as T            (Text, unpack, append)
 import Data.Text.Encoding        (decodeUtf8', encodeUtf8, decodeUtf8)
 import Data.Traversable          (mapM)
 import Data.Typeable             (Typeable)
-import GHCJS.Foreign             (fromJSString, toJSString, newArray, getPropMaybe, fromJSBool)
+import GHCJS.Foreign
 import GHCJS.Marshal             (fromJSRef)
-import GHCJS.Prim                (fromJSArray)
 import GHCJS.Types               (JSRef, JSString, isNull)
 import JavaScript.Blob           (Blob, isBlob, readBlob)
 import JavaScript.WebSockets.FFI
@@ -123,6 +122,8 @@ data SocketMsg = SocketMsgText Text
 --    the reason given by the Websockets API.
 data ConnClosing = ManualClose
                  | JSClose (Maybe Bool) (Maybe Int) (Maybe Text)
+                 | OpenInterruptedClose
+                 | UnexpectedClose Text
                  deriving (Show, Eq)
 
 -- | An exception that may be thrown when using the various 'Connection'
@@ -180,32 +181,60 @@ instance Binary a => WSReceivable a where
 -- Consider using 'withUrl', which handles closing with bracketing and
 -- error handling so you don't have to worry about closing the connection
 -- yourself.
+--
+-- Blocks until the connection has been established and opened.
+--
+-- If an async exception happens while this is waiting, the socket will be
+-- closed as the exception bubbles up.
 openConnection :: Text -> IO Connection
-openConnection url = do
-  queue   <- newArray
-  waiters <- newArray
-  -- TODO: handle exception
-  socket  <- ws_newSocket (toJSString url) queue waiters
-  closed  <- newIORef Nothing
-  block   <- newMVar ()
-  let conn = Connection socket queue waiters url closed block
-  -- TODO: handle exception
-  _       <- forkIO $ handleClose conn
-  -- TODO: handle exception
-  _       <- ws_handleOpen socket
-  return conn
+openConnection url = readMVar =<< openConnectionImmediate url
+
+openConnectionImmediate :: Text -> IO (MVar Connection)
+openConnectionImmediate url = do
+    queue   <- newArray
+    waiters <- newArray
+    socket  <- ws_newSocket (toJSString url) queue waiters
+    closed  <- newIORef Nothing
+    block   <- newMVar ()
+    let conn = Connection socket queue waiters url closed block
+    outp    <- newEmptyMVar
+    _       <- forkIO $ handleClose conn
+    _       <- forkIO $ handleOpen conn outp
+    return outp
+
+_dudConnection :: Text -> ConnClosing -> IO Connection
+_dudConnection url closing = Connection jsNull
+                         <$> newArray
+                         <*> newArray
+                         <*> pure url
+                         <*> newIORef (Just closing)
+                         <*> newMVar ()
+
+handleOpen :: Connection -> MVar Connection -> IO ()
+handleOpen conn connMVar =
+    bracketOnError (return ())
+                   (\_ -> _closeConnection OpenInterruptedClose False conn)
+                  $ \_ -> do
+                      _ <- ws_handleOpen (_connSocket conn)
+                      putMVar connMVar conn
 
 handleClose :: Connection -> IO ()
 handleClose conn = do
-    -- TODO: handle exception
-    closeEvent <- ws_handleClose (_connSocket conn)
-    wasClean   <- fmap fromJSBool <$> getPropMaybe ("wasClean" :: Text) closeEvent
-    code       <- fmap join . mapM fromJSRef =<< getPropMaybe ("code" :: Text) closeEvent
-    reason     <- fmap fromJSString <$> getPropMaybe ("reason" :: Text) closeEvent
-    let jsClose = JSClose wasClean code reason
-    _ <- _closeConnection jsClose False conn
-    return ()
-
+    connState <- connectionState conn
+    when (connState < 3) . handle handler $ do
+      closeEvent <- ws_handleClose (_connSocket conn)
+      wasClean   <- fmap fromJSBool <$> getPropMaybe ("wasClean" :: Text) closeEvent
+      code       <- fmap join . mapM fromJSRef =<< getPropMaybe ("code" :: Text) closeEvent
+      reason     <- fmap fromJSString <$> getPropMaybe ("reason" :: Text) closeEvent
+      let jsClose = JSClose wasClean code reason
+      _ <- _closeConnection jsClose False conn
+      return ()
+  where
+    -- TODO: any way to reasonably restore the handler?
+    handler :: SomeAsyncException -> IO ()
+    handler _ = void $ _closeConnection (UnexpectedClose reason) False conn
+      where
+        reason = "Close handler interrupted with Asynchronous Exception."
 
 -- | Manually closes the given 'Connection'.  It un-blocks all threads
 -- currently waiting on the connection and disables all sending and
@@ -229,31 +258,45 @@ closeConnection :: Connection -> IO ()
 closeConnection = void . _closeConnection ManualClose False
 
 _closeConnection :: ConnClosing -> Bool -> Connection -> IO [SocketMsg]
-_closeConnection cclsing dump conn =
-  withMVar (_connBlock conn) . const $ do
+_closeConnection cclsing dump conn = withConnBlockMasked conn $ do
     closed <- readIORef (_connClosed conn)
-    case closed of
-      Nothing ->
+    connState <- connectionState conn
+    if isJust closed || connState < 3
+      then
         return []
-      Just _  -> do
+      else do
         writeIORef (_connClosed conn) (Just cclsing)
         ws_closeSocket (_connSocket conn)
         ws_clearWaiters (_connWaiters conn)
         outp <- if dump
-          then do
-            msgsRefs <- fromJSArray (_connQueue conn)
-            catMaybes <$> mapM loadJSMessage msgsRefs
-          else
-            return []
-        ws_clearQueue (_connQueue conn)
+          then _dumpConnectionQueue conn
+          else [] <$ ws_clearQueue (_connQueue conn)
         return outp
-
-
 
 -- | Clears the message queue (messages waiting to be 'receive'd) on the
 -- given 'Connection'.  Works on closed 'Connection's.
 clearConnectionQueue :: Connection -> IO ()
-clearConnectionQueue = ws_clearQueue . _connQueue
+clearConnectionQueue conn = withConnBlockMasked conn $
+    ws_clearQueue (_connQueue conn)
+
+dumpConnectionQueue :: Connection -> IO [SocketMsg]
+dumpConnectionQueue conn = withConnBlockMasked conn $
+    _dumpConnectionQueue conn
+
+withConnBlock :: Connection -> IO a -> IO a
+withConnBlock conn f = withMVar (_connBlock conn) (const f)
+
+withConnBlockMasked :: Connection -> IO a -> IO a
+withConnBlockMasked conn f = withMVarMasked (_connBlock conn) (const f)
+
+
+_dumpConnectionQueue :: Connection -> IO [SocketMsg]
+_dumpConnectionQueue conn = do
+    msgsRefs <- fromArray (_connQueue conn)
+    results  <- catMaybes <$> mapM loadJSMessage msgsRefs
+    ws_clearQueue (_connQueue conn)
+    return results
+
 
 -- | Check if the given 'Connection' is closed.  Returns a 'Bool'.  To
 -- check *why* it was closed, see 'connectionCloseReason'.
@@ -267,9 +310,12 @@ connectionClosed = fmap isJust . connectionCloseReason
 -- For just a 'Bool' saying whether or not the connection is closed, try
 -- 'connectionClosed'.
 connectionCloseReason :: Connection -> IO (Maybe ConnClosing)
-connectionCloseReason conn =
-  withMVar (_connBlock conn)
-    (const (readIORef (_connClosed conn)))
+connectionCloseReason conn = withConnBlock conn $
+    readIORef (_connClosed conn)
+
+connectionState :: Connection -> IO Int
+connectionState conn = withConnBlock conn $
+    ws_readyState (_connSocket conn)
 
 -- | Returns the origin url of the given 'Connection'.
 connectionOrigin :: Connection -> Text
@@ -283,20 +329,13 @@ connectionOrigin = _connOrigin
 -- is closed.
 sendMessage :: Connection -> SocketMsg -> IO Bool
 sendMessage conn msg = do
-  -- putStrLn "hey"
   closed <- connectionClosed conn
-  -- putStrLn "yo"
   if closed
-    then do
-      -- putStrLn "go"
+    then
       return False
     else do
-      -- putStrLn "po"
-      -- print $ outgoingData' (SocketMsgData "hello")
-      -- putStrLn "ah"
       -- TODO: Validate send here
       ws_socketSend (_connSocket conn) (outgoingData msg)
-      -- putStrLn "no"
       return True
   where
     outgoingData (SocketMsgText t) = toJSString . decodeUtf8 . B64.encode . encodeUtf8 $ t

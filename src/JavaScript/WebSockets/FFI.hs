@@ -19,6 +19,7 @@ module JavaScript.WebSockets.FFI (
   , ws_clearQueue
   , ws_handleOpen
   , ws_handleClose
+  , ws_readyState
   , js_consolelog
   ) where
 
@@ -42,21 +43,21 @@ foreign import javascript unsafe "$1.send(atob($2));" ws_socketSend :: Socket ->
 foreign import javascript interruptible "$1.onopen = function() { $c($1); };"
   ws_handleOpen :: Socket -> IO Socket
 
-foreign import javascript interruptible  "var ws = new WebSocket($1);\
-                                          ws.onmessage = function(e) {\
-                                            if (!(typeof e === 'undefined')) {\
-                                              if (window.ws_debug) {\
-                                                console.log(e);\
-                                              };\
-                                              $2.push(e.data);\
-                                              if ($3.length > 0) {\
-                                                var w0 = $3.shift();\
-                                                var e0 = $2.shift();\
-                                                w0(e0);\
-                                              }\
-                                            }\
-                                          };\
-                                          $c(ws);"
+foreign import javascript unsafe  "var ws = new WebSocket($1);\
+                                   ws.onmessage = function(e) {\
+                                     if (!(typeof e === 'undefined')) {\
+                                       if (window.ws_debug) {\
+                                         console.log(e);\
+                                       };\
+                                       $2.push(e.data);\
+                                       if ($3.length > 0) {\
+                                         var w0 = $3.shift();\
+                                         var e0 = $2.shift();\
+                                         w0(e0);\
+                                       }\
+                                     }\
+                                   };\
+                                   $r = ws;"
   ws_newSocket :: JSString -> ConnectionQueue -> ConnectionWaiters -> IO Socket
 
 foreign import javascript interruptible  "if ($1.length > 0) {\
@@ -89,4 +90,8 @@ foreign import javascript unsafe "while ($1.length > 0) { $1.shift(); };"
 foreign import javascript interruptible  "$1.onclose = function (e) { $c(e); };"
   ws_handleClose :: Socket -> IO WSCloseEvent
 
-foreign import javascript unsafe "console.log($1)" js_consolelog :: JSRef a -> IO ()
+foreign import javascript unsafe "$1.readyState"
+  ws_readyState :: Socket -> IO Int
+
+foreign import javascript unsafe "console.log($1)"
+  js_consolelog :: JSRef a -> IO ()
