@@ -9,12 +9,12 @@ module JavaScript.WebSockets.FFI (
   , Waiter
   , ConnectionQueue
   , ConnectionWaiters
+  , WaiterDead
     -- * FFI
   , ws_newSocket
   , ws_closeSocket
   , ws_socketSend
   , ws_awaitConn
-  , ws_awaitConnClosed
   , ws_clearWaiters
   , ws_clearQueue
   , ws_handleOpen
@@ -23,14 +23,16 @@ module JavaScript.WebSockets.FFI (
   , js_consolelog
   ) where
 
-import GHCJS.Types               (JSRef, JSArray, JSString, JSObject)
-import Data.Text                 (Text)
+import Data.Text   (Text)
+import GHCJS.Types (JSRef, JSArray, JSString, JSObject, JSBool)
 
 data Socket_
 type Socket = JSRef Socket_
 
 data Waiter_
 type Waiter = JSRef Waiter_
+
+type WaiterDead = JSBool
 
 type ConnectionQueue = JSArray Text
 type ConnectionWaiters = JSArray Waiter
@@ -65,18 +67,15 @@ foreign import javascript interruptible  "if ($1.length > 0) {\
                                             $c(d);\
                                           } else {\
                                             $2.push(function(d) {\
-                                              $c(d);\
+                                              if ($3) {\
+                                                return false;\
+                                              } else {\
+                                                $c(d);\
+                                                return true;\
+                                              };\
                                             });\
                                           }"
-  ws_awaitConn :: ConnectionQueue -> ConnectionWaiters -> IO (JSRef ())
-
-
-foreign import javascript interruptible  "if ($1.length > 0) {\
-                                            $c($1.shift());\
-                                          } else {\
-                                            $c(null);\
-                                          }"
-  ws_awaitConnClosed :: ConnectionQueue -> IO (JSRef ())
+  ws_awaitConn :: ConnectionQueue -> ConnectionWaiters -> WaiterDead -> IO (JSRef ())
 
 foreign import javascript unsafe "while ($1.length > 0) {\
                                     var w0 = $1.shift();\

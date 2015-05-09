@@ -382,6 +382,12 @@ send_ conn = void . send conn
 receiveMessage :: Connection -> IO (Maybe SocketMsg)
 receiveMessage conn = do
   closed <- connectionClosed conn
+  if closed
+    then return Nothing
+    else do
+      waiterDead <- toJSBool False
+      msg <- ws_awaitConn (_connQueue conn) (_connWaiters conn) waiterDead
+      loadJSMessage msg
   -- TODO: handle async here.  Github issue #1
   -- I see what's gon on here.  With `ws_awaitConn`, all it does is drop
   -- a callback onto a queue.  and then when the next message comes in, the
@@ -396,11 +402,6 @@ receiveMessage conn = do
   -- well at least we've gotten to the bottom of this.
   --
   -- suggested solution: `onException` from Control.Exception
-  --
-  msg <- if closed
-           then ws_awaitConnClosed (_connQueue conn)
-           else ws_awaitConn (_connQueue conn) (_connWaiters conn)
-  loadJSMessage msg
 
 loadJSMessage :: JSRef a -> IO (Maybe SocketMsg)
 loadJSMessage msg | isNull msg = return Nothing
