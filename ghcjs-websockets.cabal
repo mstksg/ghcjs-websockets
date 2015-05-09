@@ -1,106 +1,76 @@
 name:                ghcjs-websockets
 version:             0.2.0.0
 synopsis:            GHCJS interface for the Javascript Websocket API
-description:         'JavaScript.WebSockets' aims to provide an clean,
-                     idiomatic Haskell interface abstracting over the
-                     Javascript Websockets API, targeting 'ghcjs' for
-                     receiving serialized tagged and untagged data.
+description:
+                     'ghcjs-websockets' aims to provide a clean, idiomatic,
+                     efficient, low-level, out-of-your-way, bare bones,
+                     concurrency-aware interface with minimal abstractions
+                     over the Javascript Websockets API
+                     <http://www.w3.org/TR/websockets/>,
+                     inspired by common Haskell idioms found in libraries like
+                     'io-stream'
+                     <http://hackage.haskell.org/package/io-streams> and the
+                     server-side 'websockets'
+                     <http://hackage.haskell.org/package/websockets> library,
+                     targeting compilation to Javascript with 'ghcjs'.
                      .
-                     The interface abstracts websockets as raw data streams
-                     and is designed to allow multiple styles of usage; in
-                     particular, is adapted for 'io-stream'-style usage and
-                     'distributed-process'-style usage.  It is designed to fit
-                     in unintrusively in larger frameworks, and adaptable for
-                     other interfaces (like 'pipes').
+                     The interface asbtracts websockets as simple IO/file
+                     handles, with additional access to the natively "typed"
+                     (text vs binary) nature of the Javascript Websockets API.
+                     There are also convenience functions to directly decode
+                     serialized data (serialized with 'binary'
+                     <http://hackage.haskell.org/package/binary>) sent through
+                     channels.
                      .
-                     This library provides both /tagged/ and /untagged/
-                     communication channels, using 'tagged-binary'
-                     <http://hackage.haskell.org/package/tagged-binary>.
+                     The library is mostly intended to be a low-level FFI
+                     library, with the hopes that other, more advanced
+                     libraries maybe build on the low-level FFI bindings in
+                     order to provide more advanced and powerful abstractions.
+                     Most design decisions were made with the intent of
+                     keeping things as simple as possible in order for future
+                     libraries to abstract over it.
                      .
-                     * /Untagged/ channels will throw away incoming binary
-                     data of unexpected type.
+                     Most of the necessary functionality is in hopefully in
+                     'JavaScript.WebSockets'; more of the low-level API is
+                     exposed in 'JavaScript.WebSockets.Internal' if you need
+                     it for library construction.
                      .
-                     * /Tagged/ channels will queue up binary data of
-                     unexpected type to be accessed later when data of that
-                     type is requested.
-                     .
-                     Tagged channels mimic the behavior of Cloud Haskell
-                     <http://www.haskell.org/haskellwiki/Cloud_Haskell> and
-                     'distributed-process'
-                     <http://hackage.haskell.org/package/distributed-process>,
-                     with their dynamic communication channels.  You can use
-                     the same channel to send in polymorphic, typed data and
-                     deal with it at the time you wish.
+                     See the 'JavaScript.WebSockets' module for detailed usage
+                     instructions and examples.
                      .
                      Some examples:
                      .
-                     * 'io-stream'-style usage.
-                     .
-                     > -- Echoes input from the server.
+                     > import Data.Text (unpack)
+                     >
+                     > -- A simple echo client, echoing all incoming text data
                      > main :: IO ()
-                     > main = do
-                     >     c <- openConnection "ws://server-url.com"
+                     > main = withUrl "ws://my-server.com" $ \conn ->
                      >     forever $ do
-                     >         d <- withConn c expectText
-                     >         putStrLn d
-                     >         withConn c (sendText d)
-                     >     closeConnection c
+                     >         t <- receiveText_ conn
+                     >         putStrLn (unpack t)
+                     >         sendText_ conn t
                      .
-                     * Commands involving connections can be sequenced with a
-                     monadic interface
-                     .
-                     > -- Echoes input from the server.
+                     > -- A simple client waiting for connections and outputting the running sum
                      > main :: IO ()
-                     > main = withUrl "ws://server-url.com" . forever $ do
-                     >     d <- expectText
-                     >     liftIO $ putStrLn d
-                     >     sendText d
+                     > main = withUrl "ws://my-server.com" (runningSum 0)
+                     >
+                     > runningSum :: Int -> Connection -> IO ()
+                     > runningSum n conn = do
+                     >     i <- receiveData_ conn
+                     >     print (n + i)
+                     >     runningSum (n + i) conn
                      .
-                     * Wait for incoming data only decodable as a desired
-                     type, and skip over undecodable data.
-                     .
-                     > -- Keep on printing all `Just` values, and stop at the
-                     > -- first `Nothing`.
-                     > whileJust :: ConnectionProcess ()
-                     > whileJust = do
-                     >     d <- expect
-                     >     case d of
-                     >       Just d' -> do
-                     >           liftIO $ putStrLn d'
-                     >           whileJust
-                     >       Nothing ->
-                     >           return ()
-                     .
-                     * Typed dynamic communication channels with
-                     'tagged-binary'
-                     <http://hackage.haskell.org/package/tagged-binary>;
-                     channels looking for a specific type skip over input of
-                     the wrong type, and channels looking for the other type
-                     can pick them up later or in parallel.
-                     .
-                     > -- Server emits `Int`s or `String`s randomly; launch
-                     > -- two parallel threads to catch the data as it comes
-                     > -- in, one watching for `Int`s and one watching for
-                     > -- `String`s.
+                     > -- Act as a relay between two servers
                      > main :: IO ()
                      > main = do
-                     >    c <- openTaggedConnection "ws://server-url.com"
-                     >    t1 <- forkIO . withConn c . forever $ do
-                     >        n <- expectTagged
-                     >        replicateM n . liftIO . putStrLn $ "got a number! " ++ show n
-                     >    t2 <- forkIO . withConn c . forever $ do
-                     >        s <- expectTagged
-                     >        liftIO $ putStrN s
-                     >    await t1
-                     >    await t2
-                     >    closeConnection c
-                     .
-                     See the 'JavaScript.WebSockets' module for a more
-                     detailed introduction.
-                     .
-                     There is still some functionality left to be desired;
-                     feel free to open a ticket and send in suggestions or
-                     bugs, and all pull requests are welcomed!
+                     >     conn1 <- openConnection "ws://server-1.com"
+                     >     conn2 <- openConnection "ws://server-2.com"
+                     >     forever $ do
+                     >         msg <- receiveMessage_ conn1
+                     >         sendMessage_ conn2 msg
+                     >     closeConnection conn2
+                     >     closeConnection conn1
+
 homepage:            http://github.com/mstksg/ghcjs-websockets
 license:             MIT
 license-file:        LICENSE
@@ -118,32 +88,19 @@ source-repository head
 
 library
   exposed-modules:     JavaScript.WebSockets
+                     , JavaScript.WebSockets.Internal
   -- ghcjs-options: -O2
   -- other-modules:       
   -- other-extensions:    
-  ghc-options:       -Wall
-  build-depends:     base ==4.7.*,
-                     ghcjs-base,
-                     transformers,
-                     tagged-binary,
-                     binary,
-                     spoon,
-                     containers,
-                     bytestring,
-                     text
-  -- hs-source-dirs:      
+  ghc-options:         -Wall
+  build-depends:       base >= 4.7 && < 5
+                     , base64-bytestring
+                     , binary
+                     , bytestring
+                     , containers
+                     , ghcjs-base
+                     , ghcjs-prim
+                     , primitive
+                     , text
+  hs-source-dirs:      src
   default-language:    Haskell2010
-
-executable ghcjs-websockets-test
-  main-is: Test/Tests.hs
-  ghc-options:       -O2
-  default-language:  Haskell2010
-  build-depends:     base ==4.7.*,
-                     spoon,
-                     binary,
-                     bytestring,
-                     tagged-binary,
-                     containers,
-                     ghcjs-base,
-                     transformers,
-                     text
