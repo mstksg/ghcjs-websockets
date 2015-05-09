@@ -4,12 +4,9 @@
 
 module JavaScript.Blob where
 
-import GHCJS.Types
-import Control.Applicative ((<$>))
-import GHCJS.Foreign
 import Data.ByteString
-import Data.Text.Encoding
-import qualified Data.ByteString.Base64 as B64
+import GHCJS.Foreign
+import GHCJS.Types
 
 
 data Blob_

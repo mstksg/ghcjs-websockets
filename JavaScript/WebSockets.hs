@@ -33,12 +33,13 @@ module JavaScript.WebSockets (
   , ConnClosing(..)
   -- * Opening, closing, and working with connections
   , withUrl
+  , withUrlLeftovers
   , openConnection
   , closeConnection
-  , closeConnection'
+  , closeConnectionLeftovers
   , clearConnectionQueue
   , connectionClosed
-  , connectionClosed'
+  , connectionCloseReason
   , connectionOrigin
   -- * Sending data
   -- $sending
@@ -70,6 +71,7 @@ module JavaScript.WebSockets (
   , ConnectionException(..)
   ) where
 
+import Control.Applicative
 import Control.Exception              (bracket)
 import Control.Monad                  (void)
 import Data.Binary                    (Binary)
@@ -181,15 +183,25 @@ import JavaScript.WebSockets.Internal
 -- if the given 'Connection' object is closed.
 --
 
+-- | Like 'withUrl', except returns also the "leftover messages" that were
+-- received by the socket but never processed on the Haskell end with
+-- 'receive'.
+--
+withUrlLeftovers :: Text -> (Connection -> IO a) -> IO (a, [SocketMsg])
+withUrlLeftovers url process = withUrl url $ \conn ->
+    liftA2 (,) (process conn) (closeConnectionLeftovers conn)
+
 -- | Performs the given @Connection -> IO a@ process attached to the given
 -- server url.  Handles opening and closing the 'Connection' for you (and
 -- clearing the message queue afterwards), and cleans up on errors.
+--
+-- If any messages were received by the socket but never processed/received
+-- on the Haskell end, this will delete and drop them.  Use
+-- 'withUrlLeftovers' to get a hold of them.
+--
 withUrl :: Text -> (Connection -> IO a) -> IO a
-withUrl url process = do
-    bracket
-      (openConnection url)
-      closeConnection'
-      process
+withUrl url = bracket (openConnection url) closeConnection
+
 
 -- $sending
 --

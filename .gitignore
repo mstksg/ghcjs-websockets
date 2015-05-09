@@ -1,6 +1,7 @@
-.cabal-sandbox
-cabal.sandbox.config
-.shake
-dist
-node_modules
+/.cabal-sandbox
+/cabal.sandbox.config
+/.shake
+/dist
+/node_modules
+/Test
 

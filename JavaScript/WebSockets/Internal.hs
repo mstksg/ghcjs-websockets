@@ -18,10 +18,10 @@ module JavaScript.WebSockets.Internal (
   -- * Manipulating and inspecting 'Connection's
   , openConnection
   , closeConnection
-  , closeConnection'
+  , closeConnectionLeftovers
   , clearConnectionQueue
   , connectionClosed
-  , connectionClosed'
+  , connectionCloseReason
   , connectionOrigin
   -- * Sending data
   -- ** With feedback
@@ -39,23 +39,24 @@ module JavaScript.WebSockets.Internal (
   , receiveEither_
   ) where
 
-import Control.Applicative       ((<$>),(<*>))
+import Control.Applicative
 import Control.Concurrent        (forkIO)
 import Control.Concurrent.MVar   (MVar, newMVar, withMVar)
 import Control.Exception         (Exception, throw)
-import Control.Monad             (unless, void, when, join)
+import Control.Monad             (void, join)
 import Data.Binary               (Binary, encode, decodeOrFail)
 import Data.ByteString.Lazy      (ByteString, fromStrict, toStrict)
 import Data.IORef                (IORef, newIORef, readIORef, writeIORef)
-import Data.Maybe                (isJust, fromMaybe)
+import Data.Maybe                (isJust, catMaybes)
 import Data.Text as T            (Text, unpack, append)
 import Data.Text.Encoding        (decodeUtf8', encodeUtf8, decodeUtf8)
 import Data.Traversable          (mapM)
 import Data.Typeable             (Typeable)
 import GHCJS.Foreign             (fromJSString, toJSString, newArray, getPropMaybe, fromJSBool)
 import GHCJS.Marshal             (fromJSRef)
-import GHCJS.Types               (JSString, isNull)
-import JavaScript.Blob           (isBlob, readBlob)
+import GHCJS.Prim                (fromJSArray)
+import GHCJS.Types               (JSRef, JSString, isNull)
+import JavaScript.Blob           (Blob, isBlob, readBlob)
 import JavaScript.WebSockets.FFI
 import Prelude hiding            (mapM)
 import Unsafe.Coerce             (unsafeCoerce)
@@ -103,12 +104,12 @@ data SocketMsg = SocketMsgText Text
 --    or server request, or what have you.  Contains information from the
 --    Javascript Websockets API
 --    <http://www.w3.org/TR/websockets/#event-definitions>.
+--
+--    The first field is whether or not it was a clean close; the second
+--    field is the closing reason code; the third field is a 'Text' with
+--    the reason given by the Websockets API.
 data ConnClosing = ManualClose
-                 | JSClose { _jsCloseWasClean :: Bool
-                           , _jsCloseCode     :: Int
-                           , _jsCloseReason   :: Text
-                           }
-                  | UnknownClose
+                 | JSClose (Maybe Bool) (Maybe Int) (Maybe Text)
                  deriving (Show, Eq)
 
 -- | An exception that may be thrown when using the various 'Connection'
@@ -178,46 +179,59 @@ openConnection url = do
   _       <- ws_handleOpen socket
   return conn
 
-
 handleClose :: Connection -> IO ()
 handleClose conn = do
     closeEvent <- ws_handleClose (_connSocket conn)
     wasClean   <- fmap fromJSBool <$> getPropMaybe ("wasClean" :: Text) closeEvent
     code       <- fmap join . mapM fromJSRef =<< getPropMaybe ("code" :: Text) closeEvent
     reason     <- fmap fromJSString <$> getPropMaybe ("reason" :: Text) closeEvent
-    let jsClose = JSClose <$> wasClean <*> code <*> reason
-        cClose  = fromMaybe UnknownClose jsClose
-    closeConnection_ cClose False conn
+    let jsClose = JSClose wasClean code reason
+    _ <- _closeConnection jsClose False conn
+    return ()
 
 
--- | Manually closes the given 'Connection'.  Will un-block all threads
--- currently waiting on the 'Connection' for messages (releasing their
--- callbacks) and disable sending and receiving in the future.
+-- | Manually closes the given 'Connection'.  It un-blocks all threads
+-- currently waiting on the connection and disables all sending and
+-- receiving in the future.
 --
--- Will not clear the message queue, so unprocessed messages will be left
--- for future retrievals to access.  This might not be desired, so either
--- manually clear the queue with 'clearConnectionQueue' or use
--- 'closeConnection''.
-closeConnection :: Connection -> IO ()
-closeConnection = closeConnection_ ManualClose False
+-- The result is a list of all messages received by the connection but not
+-- yet retrieved by 'receive', etc. on the Haskell end.
+--
+-- If you want to throw away all of the extra messages, use
+-- 'closeConnection_'.
+--
+closeConnectionLeftovers :: Connection -> IO [SocketMsg]
+closeConnectionLeftovers = _closeConnection ManualClose True
 
 -- | Manually closes the given 'Connection'.  Will un-block all threads
 -- currently waiting on the 'Connection' for messages (releasing their
 -- callbacks) and disable sending and receiving in the future.  Also clears
 -- the message queue on that 'Connection' so no future retrievals will
 -- return anything.
-closeConnection' :: Connection -> IO ()
-closeConnection' = closeConnection_ ManualClose True
+closeConnection :: Connection -> IO ()
+closeConnection = void . _closeConnection ManualClose False
 
-closeConnection_ :: ConnClosing -> Bool -> Connection -> IO ()
-closeConnection_ cclsing clr conn = do
+_closeConnection :: ConnClosing -> Bool -> Connection -> IO [SocketMsg]
+_closeConnection cclsing dump conn =
   withMVar (_connBlock conn) . const $ do
     closed <- readIORef (_connClosed conn)
-    unless (isJust closed) $ do
-      writeIORef (_connClosed conn) (Just cclsing)
-      ws_closeSocket (_connSocket conn)
-      ws_clearWaiters (_connWaiters conn)
-      when clr $ ws_clearQueue (_connQueue conn)
+    case closed of
+      Nothing ->
+        return []
+      Just _  -> do
+        writeIORef (_connClosed conn) (Just cclsing)
+        ws_closeSocket (_connSocket conn)
+        ws_clearWaiters (_connWaiters conn)
+        outp <- if dump
+          then do
+            msgsRefs <- fromJSArray (_connQueue conn)
+            catMaybes <$> mapM loadJSMessage msgsRefs
+          else
+            return []
+        ws_clearQueue (_connQueue conn)
+        return outp
+
+
 
 -- | Clears the message queue (messages waiting to be 'receive'd) on the
 -- given 'Connection'.  Works on closed 'Connection's.
@@ -225,9 +239,9 @@ clearConnectionQueue :: Connection -> IO ()
 clearConnectionQueue = ws_clearQueue . _connQueue
 
 -- | Check if the given 'Connection' is closed.  Returns a 'Bool'.  To
--- check *why* it was closed, see 'connectionClosed''.
+-- check *why* it was closed, see 'connectionCloseReason'.
 connectionClosed :: Connection -> IO Bool
-connectionClosed = fmap isJust . connectionClosed'
+connectionClosed = fmap isJust . connectionCloseReason
 
 -- | Returns @Nothing@ if the given 'Connection' is still open, or @Just
 -- closing@ containing a 'ConnClosing' with information on why the
@@ -235,11 +249,10 @@ connectionClosed = fmap isJust . connectionClosed'
 --
 -- For just a 'Bool' saying whether or not the connection is closed, try
 -- 'connectionClosed'.
-connectionClosed' :: Connection -> IO (Maybe ConnClosing)
-connectionClosed' conn =
+connectionCloseReason :: Connection -> IO (Maybe ConnClosing)
+connectionCloseReason conn =
   withMVar (_connBlock conn)
     (const (readIORef (_connClosed conn)))
-
 
 -- | Returns the origin url of the given 'Connection'.
 connectionOrigin :: Connection -> Text
@@ -333,19 +346,21 @@ receiveMessage conn = do
   msg <- if closed
            then ws_awaitConnClosed (_connQueue conn)
            else ws_awaitConn (_connQueue conn) (_connWaiters conn)
-  if isNull msg
-    then
-      return Nothing
-    else do
-      blb <- isBlob msg
-      if blb
-        then do
-          let blob = unsafeCoerce msg
-          readed <- fromStrict <$> readBlob blob
-          return (Just (SocketMsgData readed))
-        else do
-          let blob = unsafeCoerce msg :: JSString
-          return (Just . SocketMsgText . fromJSString $ blob)
+  loadJSMessage msg
+
+loadJSMessage :: JSRef a -> IO (Maybe SocketMsg)
+loadJSMessage msg | isNull msg = return Nothing
+                  | otherwise  = do
+    blb <- isBlob msg
+    if blb
+      then do
+        let blob = unsafeCoerce msg :: Blob
+        readed <- fromStrict <$> readBlob blob
+        return (Just (SocketMsgData readed))
+      else do
+        let blob = unsafeCoerce msg :: JSString
+        return . Just . SocketMsgText . fromJSString $ blob
+
 
 -- | Block and wait until the 'Connection' receives any message, and
 -- returns the message wrapped in a 'SocketMsg'.  A 'SocketMsg' is a sum
