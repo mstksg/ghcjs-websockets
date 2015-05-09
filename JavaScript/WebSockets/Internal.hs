@@ -301,8 +301,6 @@ sendMessage conn msg = do
   where
     outgoingData (SocketMsgText t) = toJSString . decodeUtf8 . B64.encode . encodeUtf8 $ t
     outgoingData (SocketMsgData d) = toJSString . decodeUtf8 . toStrict . B64L.encode $ d
-    -- outgoingData' (SocketMsgText t) = B64.encode . encodeUtf8 $ t
-    -- outgoingData' (SocketMsgData d) = toStrict . B64L.encode $ d
 
 
 -- | Sends the given 'SocketMsg' through the given 'Connection'.
