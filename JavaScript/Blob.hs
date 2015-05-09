@@ -1,8 +1,13 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE JavaScriptFFI #-}
-{-# LANGUAGE CPP #-}
+{-# OPTIONS_HADDOCK hide #-}
 
-module JavaScript.Blob where
+module JavaScript.Blob (
+    Blob
+  , readBlob
+  , isBlob
+  ) where
 
 import Data.ByteString
 import GHCJS.Foreign
@@ -11,10 +16,6 @@ import GHCJS.Types
 
 data Blob_
 type Blob = JSRef Blob_
-
-data FileReader_
-type FileReader = JSRef FileReader_
-
 
 foreign import javascript interruptible  "var reader = new FileReader();\
                                           reader.addEventListener('loadend', function() {\

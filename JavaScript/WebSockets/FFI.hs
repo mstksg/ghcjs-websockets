@@ -1,6 +1,7 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE JavaScriptFFI #-}
-{-# LANGUAGE CPP #-}
+{-# OPTIONS_HADDOCK hide #-}
 
 module JavaScript.WebSockets.FFI (
   -- * Types

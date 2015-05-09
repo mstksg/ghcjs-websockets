@@ -1,8 +1,9 @@
+{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE IncoherentInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
 module JavaScript.WebSockets.Internal (
   -- * Types
@@ -71,12 +72,24 @@ import qualified Data.ByteString.Base64.Lazy as B64L
 -- Care must be taken to close the connection once you are done if using
 -- 'openConnection', or unprocessed messages and callbacks will continue to
 -- queue up.
-data Connection = Connection { _connSocket     :: Socket                -- ^ JS Socket
-                             , _connQueue      :: ConnectionQueue       -- ^ JS Message queue
-                             , _connWaiters    :: ConnectionWaiters     -- ^ JS Listener queue
-                             , _connOrigin     :: Text                  -- ^ origin url
-                             , _connClosed     :: IORef (Maybe ConnClosing)   -- ^ Closed status/reason
-                             , _connBlock      :: MVar ()               -- ^ lock for handling
+--
+data Connection = Connection { -- | JSRef to JS Websocket object
+                               _connSocket     :: Socket
+                               -- | JSRef to JSArray of queued incoming
+                               -- messages, managed directly in FFI
+                             , _connQueue      :: ConnectionQueue
+                               -- | JSRef to JSArray of queue of waiting
+                               -- receivers, managed directly in FFI
+                             , _connWaiters    :: ConnectionWaiters
+                               -- | Text of server socket was originally
+                               -- opened with
+                             , _connOrigin     :: Text
+                               -- | IORef with Nothing if the connection is
+                               -- still open and @Just reason@ if it's
+                               -- closed, with the reason
+                             , _connClosed     :: IORef (Maybe ConnClosing)
+                               -- | Mutex for thread-safe manipulation
+                             , _connBlock      :: MVar ()
                              }
 
 -- | Sum type over the data that can be sent or received through
@@ -171,16 +184,20 @@ openConnection :: Text -> IO Connection
 openConnection url = do
   queue   <- newArray
   waiters <- newArray
+  -- TODO: handle exception
   socket  <- ws_newSocket (toJSString url) queue waiters
   closed  <- newIORef Nothing
   block   <- newMVar ()
   let conn = Connection socket queue waiters url closed block
+  -- TODO: handle exception
   _       <- forkIO $ handleClose conn
+  -- TODO: handle exception
   _       <- ws_handleOpen socket
   return conn
 
 handleClose :: Connection -> IO ()
 handleClose conn = do
+    -- TODO: handle exception
     closeEvent <- ws_handleClose (_connSocket conn)
     wasClean   <- fmap fromJSBool <$> getPropMaybe ("wasClean" :: Text) closeEvent
     code       <- fmap join . mapM fromJSRef =<< getPropMaybe ("code" :: Text) closeEvent
