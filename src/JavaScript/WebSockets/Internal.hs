@@ -28,17 +28,14 @@ module JavaScript.WebSockets.Internal (
   -- * Sending data
   -- ** With feedback
   , sendMessage
-  , send
-  -- ** Without feedback
   , sendMessage_
+  , send
   , send_
   -- * Receiving data
-  -- ** Safe
   , receiveMessage
+  , receiveMessageMaybe
   , receiveEither
-  -- ** Unsafe
-  , receiveMessage_
-  , receiveEither_
+  , receiveEitherMaybe
   ) where
 
 import Control.Applicative
@@ -293,7 +290,7 @@ withConnBlockMasked conn f = withMVarMasked (_connBlock conn) (const f)
 _dumpConnectionQueue :: Connection -> IO [SocketMsg]
 _dumpConnectionQueue conn = do
     msgsRefs <- fromArray (_connQueue conn)
-    results  <- catMaybes <$> mapM loadJSMessage msgsRefs
+    results  <- catMaybes <$> mapM _loadJSMessage msgsRefs
     ws_clearQueue (_connQueue conn)
     return results
 
@@ -346,7 +343,8 @@ sendMessage conn msg = do
 -- A 'SocketMsg' is a sum type of either 'SocketMsgText t', containing
 -- (strict) 'Text', or 'SocketMsgData d', containing a (lazy) 'ByteString'.
 --
--- Fails silently if the connection is closed.
+-- Fails silently if the connection is closed.  Use 'sendMessage' to get
+-- feedback on the result of the send.
 sendMessage_ :: Connection -> SocketMsg -> IO ()
 sendMessage_ conn = void . sendMessage conn
 
@@ -367,7 +365,8 @@ send conn = sendMessage conn . wrapSendable
 -- due to over-indulgent typeclass magic; this is basically a function that
 -- works everywhere you would use 'sendText_' or 'sendData_'.
 --
--- Fails silently if the connection is closed.
+-- Fails silently if the connection is closed.  Use 'send' to get feedback
+-- on the result of the send.
 send_ :: WSSendable a => Connection -> a -> IO ()
 send_ conn = void . send conn
 
@@ -379,8 +378,8 @@ send_ conn = void . send conn
 -- Will return 'Just msg' as soon as any message is received, or 'Nothing'
 -- if the 'Connection' closes first.  Returns 'Nothing' immediately if the
 -- 'Connection' is already closed.
-receiveMessage :: Connection -> IO (Maybe SocketMsg)
-receiveMessage conn = do
+receiveMessageMaybe :: Connection -> IO (Maybe SocketMsg)
+receiveMessageMaybe conn = do
   closed <- connectionClosed conn
   if closed
     then return Nothing
@@ -389,11 +388,11 @@ receiveMessage conn = do
               -- set to ignore waiter if thread has died
       msg <- ws_awaitConn (_connQueue conn) (_connWaiters conn) waiterKilled
               `onException` setProp ("k" :: JSString) jsTrue waiterKilled
-      loadJSMessage msg
+      _loadJSMessage msg
 
-loadJSMessage :: JSRef a -> IO (Maybe SocketMsg)
-loadJSMessage msg | isNull msg = return Nothing
-                  | otherwise  = do
+_loadJSMessage :: JSRef a -> IO (Maybe SocketMsg)
+_loadJSMessage msg | isNull msg = return Nothing
+                   | otherwise  = do
     blb <- isBlob msg
     if blb
       then do
@@ -414,12 +413,12 @@ loadJSMessage msg | isNull msg = return Nothing
 -- a 'ConnectionException' if the connection is closed while waiting.
 -- Throws an exception immediately if the connection is already closed.
 --
--- For a "safe" version, see 'receiveMessage'.
-receiveMessage_ :: Connection -> IO SocketMsg
-receiveMessage_ conn = unjust <$> receiveMessage conn
+-- To handle closed sockets with 'Maybe', use 'receiveMessageMaybe'.
+receiveMessage :: Connection -> IO SocketMsg
+receiveMessage conn = unjust <$> receiveMessageMaybe conn
   where
     unjust (Just i ) = i
-    unjust Nothing  = throw $ ConnectionClosed (_connOrigin conn)
+    unjust Nothing   = throw $ ConnectionClosed (_connOrigin conn)
 
 -- | Block and wait until the 'Connection' receives any message, and
 -- attempts to decode it depending on the desired type.  If 'Text' is
@@ -432,8 +431,8 @@ receiveMessage_ conn = unjust <$> receiveMessage conn
 -- Returns @Just result@ on the first message received, or @Nothing@ if the
 -- 'Connection' closes while waiting.  Returns @Nothing@ if the connection
 -- is already closed and there are no queued messages left.
-receiveEither :: WSReceivable a => Connection -> IO (Maybe (Either SocketMsg a))
-receiveEither = (fmap . fmap) unwrapReceivable . receiveMessage
+receiveEitherMaybe :: WSReceivable a => Connection -> IO (Maybe (Either SocketMsg a))
+receiveEitherMaybe = (fmap . fmap) unwrapReceivable . receiveMessageMaybe
 
 -- | Block and wait until the 'Connection' receives any message, and
 -- attempts to decode it depending on the desired type.  If 'Text' is
@@ -448,6 +447,7 @@ receiveEither = (fmap . fmap) unwrapReceivable . receiveMessage
 -- Throws an exception immediately if the connection is already closed and
 -- there are no queued messages left.
 --
--- For a "safe" version, see 'receiveEither'.
-receiveEither_ :: WSReceivable a => Connection -> IO (Either SocketMsg a)
-receiveEither_ = fmap unwrapReceivable . receiveMessage_
+-- To handle closed sockets with 'Maybe', use 'receiveEitherMaybe'.
+--
+receiveEither :: WSReceivable a => Connection -> IO (Either SocketMsg a)
+receiveEither = fmap unwrapReceivable . receiveMessage

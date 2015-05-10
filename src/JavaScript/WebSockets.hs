@@ -31,6 +31,7 @@ module JavaScript.WebSockets (
   , WSReceivable
   , SocketMsg(..)
   , ConnClosing(..)
+  , ConnectionException(..)
   -- * Opening, closing, and working with connections
   , withUrl
   , withUrlLeftovers
@@ -43,32 +44,26 @@ module JavaScript.WebSockets (
   , connectionOrigin
   -- * Sending data
   -- $sending
-  -- ** With feedback
   , sendData
-  , sendText
-  , sendMessage
-  , send
-  -- ** Without feedback
   , sendData_
+  , sendText
   , sendText_
+  , sendMessage
   , sendMessage_
+  , send
   , send_
   -- * Receiving data
   -- $receiving
-  -- ** Safe
-  , receiveText
-  , receiveData
-  , receiveMessage
-  , receiveEither
   , receive
-  -- ** Unsafe
-  , receiveText_
-  , receiveData_
-  , receiveMessage_
-  , receiveEither_
-  , receive_
-  -- * Exceptions
-  , ConnectionException(..)
+  , receiveMaybe
+  , receiveText
+  , receiveTextMaybe
+  , receiveData
+  , receiveDataMaybe
+  , receiveMessage
+  , receiveMessageMaybe
+  , receiveEither
+  , receiveEitherMaybe
   ) where
 
 import Control.Applicative
@@ -227,13 +222,15 @@ sendText = send
 -- | Send the given serializable (instance of 'Binary') data on the given
 -- connection.
 --
--- Fails silently if the connection is closed.
+-- Fails silently if the connection is closed.  Use 'sendData' to get
+-- feedback on the result of the send.
 sendData_ :: Binary a => Connection -> a -> IO ()
 sendData_ conn = void . sendData conn
 
 -- | Send the given (strict) 'Text' on the given connection.
 --
--- Fails silently if the connection is closed.
+-- Fails silently if the connection is closed.  Use 'sendText' to get
+-- feedback on the result of the send.
 sendText_ :: Connection -> Text -> IO ()
 sendText_ conn = void . sendText conn
 
@@ -264,8 +261,8 @@ sendText_ conn = void . sendText conn
 -- queued messages left.
 --
 -- All "binary blobs" encountered are discarded.
-receiveText :: Connection -> IO (Maybe Text)
-receiveText = receive
+receiveTextMaybe :: Connection -> IO (Maybe Text)
+receiveTextMaybe = receiveMaybe
 
 -- | Block and wait until the 'Connection' receives a "binary blob"
 -- decodable as the desired instance of 'Binary'.  Returns @Just x@ as soon
@@ -277,8 +274,8 @@ receiveText = receive
 -- inference system know what you want at some point or just give an
 -- explicit type signature --- @receiveData conn :: IO (Maybe Int)@, for
 -- example.
-receiveData :: Binary a => Connection -> IO (Maybe a)
-receiveData = receive
+receiveDataMaybe :: Binary a => Connection -> IO (Maybe a)
+receiveDataMaybe = receiveMaybe
 
 -- | Block and wait until either something decodable as the desired type is
 -- received (returning @Just x@), or the 'Connection' closes (returning
@@ -295,13 +292,13 @@ receiveData = receive
 -- You can 'receive' either (strict) 'Text' or any instance of 'Binary',
 -- due to over-indulgent typeclass magic; this is basically a function that
 -- works everywhere you would use 'receiveText' or 'receiveData'.
-receive :: WSReceivable a => Connection -> IO (Maybe a)
-receive conn = do
-  d <- receiveEither conn
+receiveMaybe :: WSReceivable a => Connection -> IO (Maybe a)
+receiveMaybe conn = do
+  d <- receiveEitherMaybe conn
   case d of
     Nothing         -> return Nothing
     Just (Right d') -> return (Just d')
-    Just _          -> receive conn
+    Just _          -> receiveMaybe conn
 
 -- | Block and wait until the 'Connection' receives a "typed" 'Text'.  This
 -- is determined by Javascript's own "typed" Websockets API
@@ -313,9 +310,9 @@ receive conn = do
 --
 -- All "binary blobs" encountered are discarded.
 --
--- For a "safe" version, see 'receive'.
-receiveText_ :: Connection -> IO Text
-receiveText_ = receive_
+-- To handle closed sockets with 'Maybe', use 'receiveTextMaybe'.
+receiveText :: Connection -> IO Text
+receiveText = receive
 
 -- | Block and wait until the 'Connection' receives a "binary blob"
 -- decodable as the desired instance of 'Binary'.  Returns the first
@@ -328,9 +325,9 @@ receiveText_ = receive_
 -- explicit type signature --- @receiveData conn :: IO (Maybe Int)@, for
 -- example.
 --
--- For a "safe" version, see 'receive'.
-receiveData_ :: Binary a => Connection -> IO a
-receiveData_ = receive_
+-- To handle closed sockets with 'Maybe', use 'receiveDataMaybe'.
+receiveData :: Binary a => Connection -> IO a
+receiveData = receive
 
 -- | Block and wait until either something decodable as the desired type is
 -- received (returning it), or the 'Connection' closes (throwing
@@ -348,11 +345,11 @@ receiveData_ = receive_
 -- due to over-indulgent typeclass magic; this is basically a function that
 -- works everywhere you would use 'receiveText_' or 'receiveData_'.
 --
--- For a "safe" version, see 'receive'.
-receive_ :: WSReceivable a => Connection -> IO a
-receive_ conn = do
-  d <- receiveEither_ conn
+-- To handle closed sockets with 'Maybe', use 'receive'.
+receive :: WSReceivable a => Connection -> IO a
+receive conn = do
+  d <- receiveEither conn
   case d of
     Right d' -> return d'
-    _        -> receive_ conn
+    _        -> receive conn
 

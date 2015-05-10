@@ -38,8 +38,11 @@ type ConnectionWaiters = JSArray Waiter
 
 type WSCloseEvent = JSObject ()
 
-foreign import javascript unsafe "$1.close();" ws_closeSocket :: Socket -> IO ()
-foreign import javascript unsafe "$1.send(atob($2));" ws_socketSend :: Socket -> JSString -> IO ()
+foreign import javascript unsafe "$1.close();"
+  ws_closeSocket :: Socket -> IO ()
+
+foreign import javascript unsafe "$1.send(atob($2));"
+  ws_socketSend :: Socket -> JSString -> IO ()
 
 foreign import javascript interruptible "$1.onopen = function() { $c($1); };"
   ws_handleOpen :: Socket -> IO Socket
