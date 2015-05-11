@@ -37,9 +37,9 @@ import Data.Text (unpack)
 main :: IO ()
 main = withUrl "ws://my-server.com" $ \conn ->
     forever $ do
-        t <- receiveText_ conn
+        t <- receiveText conn
         putStrLn (unpack t)
-        sendText_ conn t
+        sendText conn t
 ```
 
 The above code will attempt to interpret all incoming data as UTF8-encoded
@@ -57,22 +57,21 @@ main = withUrl "ws://my-server.com" (runningSum 0)
 
 runningSum :: Int -> Connection -> IO ()
 runningSum n conn = do
-    i <- receiveData_ conn
+    i <- receiveData conn
     print (n + i)
     runningSum (n + i) conn
 ```
 
-`receiveData_` will block until the `Connection` receives data that is
+`receiveData` will block until the `Connection` receives data that is
 decodable as whatever type you expect, and will throw away all nondecodable
 data (including `Text` data).
 
-The `receive_` function is provided as a disgustingly over-indulgent and
-unnecessary layer of abstraction where you can receive both `Text` and
-instances of `Binary` with the same function using typeclass magic --- for the
-examples above, you could use `receive_` in place of both `receiveText_` and
-`receiveData_`.
+The `receive` function is provided as an over-indulgent layer of abstraction
+where you can receive both `Text` and instances of `Binary` with the same
+function using typeclass magic --- for the examples above, you could use
+`receive` in place of both `receiveText` and `receiveData`.
 
-`send_` works the same way for `sendText_` and `sendData_`.
+`send` works the same way for `sendText` and `sendData`.
 
 If you want to, you can access the incoming data directly using the
 `SocketMsg` sum type, which exposes either a `Text` or a lazy `ByteString`:
@@ -84,7 +83,7 @@ import qualified Data.ByteString.Base64.Lazy as B64
 main :: IO ()
 main = withUrl "ws://my-server.com" $ \conn ->
     forever $ do
-        msg <- receiveMessage_
+        msg <- receiveMessage
         putStrLn $ case msg of
             SocketMsgText t ->
                 unpack $ append "Received text: " t
@@ -100,8 +99,8 @@ main :: IO ()
 main =  withUrl "ws://server-1.com" $ \conn1 ->
         withUrl "ws://server-2.com" $ \conn2 ->
             forever $ do
-                msg <- receiveMessage_ conn1
-                sendMessage_ conn2 msg
+                msg <- receiveMessage conn1
+                sendMessage conn2 msg
 ```
 
 And also alternatively, you can manually open and close connections:
@@ -113,33 +112,30 @@ main = do
     conn1 <- openConnection "ws://server-1.com"
     conn2 <- openConnection "ws://server-2.com"
     forever $ do
-        msg <- receiveMessage_ conn1
-        sendMessage_ conn2 msg
+        msg <- receiveMessage conn1
+        sendMessage conn2 msg
     closeConnection conn2
     closeConnection conn1
 ```
 
-If you're manually working with connections like that, then the "safe",
-non-underscore versions of `receive_`, `send_` are available.
-
-forall `X`, `receiveX` behaves exactly like `receiveX_`, except it returns
-`Maybe a` instead of `a`, and returns `Nothing` if the connection is closed or
-if it closes while it's blocking/waiting.  If you attempt to `receiveX_` on a
-closed connection or if the connection closes while you are waiting, a
-`ConnectionException` will be thrown.
-
-forall `X`, `sendX` behaves exactly like `sendX_`, except it returns `Bool`
-instead of `()`, where the `Bool` indicates if connection you are trying to
-send is open or not.  Trying to send message through a closed connection
-returns `False` (and nothing is ever sent) and trying on an open connection
-returns `True`.  This is different, technically, then checking if the message
-was sent at all, as other things might go wrong further down the line, or with
-the FFI API.  Hopefully stronger guarantees will be implemented in due time.
+`receiveMessage` and its varieties will all throw an exception if the
+connection closes while they're waiting or if you attempt to receive on a
+closed connection.  You can handle these with mechanisms from
+`Control.Exception`, or you can use their "maybe"-family counterparts,
+`receiveMessageMaybe`, etc., who will return results in `Just` on a success,
+or return a `Nothing` if the connection is closed or if receiving on a closed
+connection.
 
 You can use also `connectionClosed :: Connection -> IO Bool` to check if the
-given `Connection` object is closed.
+given `Connection` object is closed (or `connectionCloseReason` to see *why*).
+
+When closing connections, there might be some messages that were received by
+the socket but never processed on the Haskell side with a `receive` method.
+These will normally be deleted; however, you can use
+`closeConnectionLeftovers` or `withUrlLeftovers` to grab a list of the raw
+`SocketMsg`s remaining after closing.
 
 ### Copyright
 
-Copyright (c) Justin Le 2014
+Copyright (c) Justin Le 2015
 

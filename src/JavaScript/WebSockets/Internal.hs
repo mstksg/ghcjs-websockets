@@ -5,6 +5,22 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_HADDOCK not-home #-}
 
+-- |
+-- Module      : JavaScript.WebSockets.Internal
+-- Copyright   : (c) Justin Le 2015
+-- License     : MIT
+--
+-- Maintainer  : justin@jle.im
+-- Stability   : unstable
+-- Portability : ghcjs
+--
+--
+-- Low-level API for the 'Connection' socket wrapper, for situations like
+-- debugging when things exported by "JavaScript.WebSockets" is not enough.
+-- Most everyday usage should be covered by the aforementioned module, so
+-- don't import this unless you really really have to.
+--
+
 module JavaScript.WebSockets.Internal (
   -- * Types
   -- ** Data types
@@ -17,25 +33,20 @@ module JavaScript.WebSockets.Internal (
   -- ** Exceptions
   , ConnectionException(..)
   -- * Manipulating and inspecting 'Connection's
-  , openConnection
+  , openConnectionImmediate
   , closeConnection
   , closeConnectionLeftovers
   , clearConnectionQueue
   , dumpConnectionQueue
   , connectionClosed
   , connectionCloseReason
-  , connectionOrigin
-  -- * Sending data
-  -- ** With feedback
+  , connectionStateCode
+  -- * Sending and receiving
   , sendMessage
-  , sendMessage_
-  , send
-  , send_
-  -- * Receiving data
-  , receiveMessage
   , receiveMessageMaybe
-  , receiveEither
-  , receiveEitherMaybe
+  -- * Connection mutex
+  , withConnBlock
+  , withConnBlockMasked
   ) where
 
 import Control.Applicative
@@ -117,6 +128,12 @@ data SocketMsg = SocketMsgText Text
 --    The first field is whether or not it was a clean close; the second
 --    field is the closing reason code; the third field is a 'Text' with
 --    the reason given by the Websockets API.
+--
+-- *  'OpenInterupptedClose': There was an unexpected error encountered
+--    when attempting to open the connection.
+--
+-- *  'UnexpectedClose': Otherwise uncategorized closed status, with
+--    a 'Text' field offering a reason.
 data ConnClosing = ManualClose
                  | JSClose (Maybe Bool) (Maybe Int) (Maybe Text)
                  | OpenInterruptedClose
@@ -129,20 +146,21 @@ data ConnClosing = ManualClose
 -- a 'Connection' closes while an unsafe @receive@ is waiting.
 data ConnectionException = ConnectionClosed { _socketOrigin :: Text }
                          deriving (Eq, Typeable)
+-- TODO: Other exceptions!  Open? Send?
 
 instance Show ConnectionException where
     show (ConnectionClosed o) = T.unpack $ T.append "Error: Waiting on closed connection " o
 instance Exception ConnectionException
 
--- | A typeclass offering gratuitous and unnecessary abstraction over what
--- can be sent through a 'Connection'.  Allows you to wrap things in
--- a 'SocketMsg' automatically.  The only instances that should really ever
--- exist are 'Text' and instances of 'Binary'.
+-- | A typeclass offering a gratuitous abstraction over what can be sent
+-- through a 'Connection'.  Allows you to wrap things in a 'SocketMsg'
+-- automatically.  The only instances that should really ever exist are
+-- 'Text' and instances of 'Binary'.
 class WSSendable s where
     wrapSendable :: s -> SocketMsg
 
--- | A typeclass offering gratuitous and unnecessary abstraction over what
--- can be received through a 'Connection'.  Allows you to unwrap things in
+-- | A typeclass offering a gratuitous abstraction over what can be
+-- received through a 'Connection'.  Allows you to unwrap things in
 -- a 'SocketMsg' automatically.  The only instances that should really ever
 -- exist are 'Text' and instances of 'Binary'.
 class WSReceivable s where
@@ -171,21 +189,9 @@ instance Binary a => WSReceivable a where
                SocketMsgText t -> fromStrict (encodeUtf8 t)
                SocketMsgData d -> d
 
--- | Opens a websocket connection to the given url, and returns the
--- 'Connection' after the handshake is complete.  Care should be taken to
--- ensure that the 'Connection' is later closed with 'closeConnection'.
---
--- Consider using 'withUrl', which handles closing with bracketing and
--- error handling so you don't have to worry about closing the connection
--- yourself.
---
--- Blocks until the connection has been established and opened.
---
--- If an async exception happens while this is waiting, the socket will be
--- closed as the exception bubbles up.
-openConnection :: Text -> IO Connection
-openConnection url = readMVar =<< openConnectionImmediate url
-
+-- | A version of 'openConnection' that doesn't wait for the connection to
+-- be opened.  Returns an 'MVar' where the connection can be expected to be
+-- placed when it is opened.
 openConnectionImmediate :: Text -> IO (MVar Connection)
 openConnectionImmediate url = do
     queue   <- newArray
@@ -196,6 +202,7 @@ openConnectionImmediate url = do
     let conn = Connection socket queue waiters url closed block
     outp    <- newEmptyMVar
     _       <- forkIO $ handleClose conn
+    -- TODO: Opening errors
     _       <- forkIO $ handleOpen conn outp
     return outp
 
@@ -217,7 +224,7 @@ handleOpen conn connMVar =
 
 handleClose :: Connection -> IO ()
 handleClose conn = do
-    connState <- connectionState conn
+    connState <- connectionStateCode conn
     when (connState < 3) . handle handler $ do
       closeEvent <- ws_handleClose (_connSocket conn)
       wasClean   <- fmap fromJSBool <$> getPropMaybe ("wasClean" :: Text) closeEvent
@@ -240,25 +247,26 @@ handleClose conn = do
 -- The result is a list of all messages received by the connection but not
 -- yet retrieved by 'receive', etc. on the Haskell end.
 --
--- If you want to throw away all of the extra messages, use
--- 'closeConnection_'.
+-- To close and ignore leftovers, use 'closeConnection'.
 --
 closeConnectionLeftovers :: Connection -> IO [SocketMsg]
 closeConnectionLeftovers = _closeConnection ManualClose True
 
 -- | Manually closes the given 'Connection'.  Will un-block all threads
 -- currently waiting on the 'Connection' for messages (releasing their
--- callbacks) and disable sending and receiving in the future.  Also clears
--- the message queue on that 'Connection' so no future retrievals will
--- return anything.
+-- callbacks) and disable sending and receiving in the future.
+--
+-- All leftover messages that were never processed on the Haskell end will
+-- be deleted; use 'dumpConnectionQueue' to manually fetch them before
+-- closing, or 'closeConnectionLeftovers' to recover them while closing.
 closeConnection :: Connection -> IO ()
 closeConnection = void . _closeConnection ManualClose False
 
 _closeConnection :: ConnClosing -> Bool -> Connection -> IO [SocketMsg]
 _closeConnection cclsing dump conn = withConnBlockMasked conn $ do
-    closed <- readIORef (_connClosed conn)
-    connState <- connectionState conn
-    if isJust closed || connState < 3
+    closed <- isJust <$> readIORef (_connClosed conn)
+    connState <- connectionStateCode conn
+    if closed || connState < 3
       then
         return []
       else do
@@ -271,21 +279,36 @@ _closeConnection cclsing dump conn = withConnBlockMasked conn $ do
         return outp
 
 -- | Clears the message queue (messages waiting to be 'receive'd) on the
--- given 'Connection'.  Works on closed 'Connection's.
+-- given 'Connection'.  Is essentially a no-op on closed connections.
 clearConnectionQueue :: Connection -> IO ()
-clearConnectionQueue conn = withConnBlockMasked conn $
-    ws_clearQueue (_connQueue conn)
+clearConnectionQueue conn = withConnBlockMasked conn $ do
+    closed <- isJust <$> readIORef (_connClosed conn)
+    when closed $ ws_clearQueue (_connQueue conn)
 
+-- | Returns all incoming messages received by the socket and queued for
+-- retrieval using 'receive' functions.  Empties the queue.
 dumpConnectionQueue :: Connection -> IO [SocketMsg]
 dumpConnectionQueue conn = withConnBlockMasked conn $
     _dumpConnectionQueue conn
 
+-- | Execute process with the connection mutex lock in effect.  Will wait
+-- until the lock is released before starting, if lock was already in
+-- place.
+--
+-- Will break almost every 'Connection' function if you run one while this
+-- is in effect, because almost all of them require the lock to begin.
 withConnBlock :: Connection -> IO a -> IO a
 withConnBlock conn f = withMVar (_connBlock conn) (const f)
 
+-- | Execute process with the connection mutex lock in effect, with
+-- asynchronos exceptions masked (See "Control.Exception").  Will wait
+-- until the lock is released before starting, if lock was already in
+-- place.
+--
+-- Will break almost every 'Connection' function if you run one while this
+-- is in effect, because almost all of them require the lock to begin.
 withConnBlockMasked :: Connection -> IO a -> IO a
 withConnBlockMasked conn f = withMVarMasked (_connBlock conn) (const f)
-
 
 _dumpConnectionQueue :: Connection -> IO [SocketMsg]
 _dumpConnectionQueue conn = do
@@ -310,20 +333,22 @@ connectionCloseReason :: Connection -> IO (Maybe ConnClosing)
 connectionCloseReason conn = withConnBlock conn $
     readIORef (_connClosed conn)
 
-connectionState :: Connection -> IO Int
-connectionState conn = withConnBlock conn $
+-- | Returns the "readyState" of the connection's javascript websockets
+-- API: 0 is connecting, 1 is open, 2 is closing, and 3 is closed.
+-- Shouldn't really be used except for debugging purposes.  Use
+-- 'connectionCloseReason' whenever possible to get information in a nice
+-- haskelley sum type.
+connectionStateCode :: Connection -> IO Int
+connectionStateCode conn = withConnBlock conn $
     ws_readyState (_connSocket conn)
-
--- | Returns the origin url of the given 'Connection'.
-connectionOrigin :: Connection -> Text
-connectionOrigin = _connOrigin
 
 -- | Sends the given 'SocketMsg' through the given 'Connection'.
 -- A 'SocketMsg' is a sum type of either 'SocketMsgText t', containing
 -- (strict) 'Text', or 'SocketMsgData d', containing a (lazy) 'ByteString'.
 --
--- Returns 'True' if the connection is open, and 'False' if it
--- is closed.
+-- Returns 'True' if the connection is open, and 'False' if it is closed.
+-- In the future will return more feedback about whether or not the send
+-- was completed succesfully.
 sendMessage :: Connection -> SocketMsg -> IO Bool
 sendMessage conn msg = do
   closed <- connectionClosed conn
@@ -337,38 +362,6 @@ sendMessage conn msg = do
   where
     outgoingData (SocketMsgText t) = toJSString . decodeUtf8 . B64.encode . encodeUtf8 $ t
     outgoingData (SocketMsgData d) = toJSString . decodeUtf8 . toStrict . B64L.encode $ d
-
-
--- | Sends the given 'SocketMsg' through the given 'Connection'.
--- A 'SocketMsg' is a sum type of either 'SocketMsgText t', containing
--- (strict) 'Text', or 'SocketMsgData d', containing a (lazy) 'ByteString'.
---
--- Fails silently if the connection is closed.  Use 'sendMessage' to get
--- feedback on the result of the send.
-sendMessage_ :: Connection -> SocketMsg -> IO ()
-sendMessage_ conn = void . sendMessage conn
-
--- | Send the given item through the given 'Connection'.
---
--- You can 'send' either (strict) 'Text' or any instance of 'Binary',
--- due to over-indulgent typeclass magic; this is basically a function that
--- works everywhere you would use 'sendText' or 'sendData'.
---
--- Returns 'True' if the connection is open, and 'False' if it
--- is closed.
-send :: WSSendable a => Connection -> a -> IO Bool
-send conn = sendMessage conn . wrapSendable
-
--- | Send the given item through the given 'Connection'.
---
--- You can 'send_' either (strict) 'Text' or any instance of 'Binary',
--- due to over-indulgent typeclass magic; this is basically a function that
--- works everywhere you would use 'sendText_' or 'sendData_'.
---
--- Fails silently if the connection is closed.  Use 'send' to get feedback
--- on the result of the send.
-send_ :: WSSendable a => Connection -> a -> IO ()
-send_ conn = void . send conn
 
 -- | Block and wait until the 'Connection' receives any message, and
 -- returns the message wrapped in a 'SocketMsg'.  A 'SocketMsg' is a sum
@@ -403,51 +396,3 @@ _loadJSMessage msg | isNull msg = return Nothing
         let blob = unsafeCoerce msg :: JSString
         return . Just . SocketMsgText . fromJSString $ blob
 
-
--- | Block and wait until the 'Connection' receives any message, and
--- returns the message wrapped in a 'SocketMsg'.  A 'SocketMsg' is a sum
--- type of either 'SocketMsgText t', containing (strict) 'Text', or
--- 'SocketMsgData d', containing a (lazy) 'ByteString'.
---
--- Will return the message as soon as any is received, or throw
--- a 'ConnectionException' if the connection is closed while waiting.
--- Throws an exception immediately if the connection is already closed.
---
--- To handle closed sockets with 'Maybe', use 'receiveMessageMaybe'.
-receiveMessage :: Connection -> IO SocketMsg
-receiveMessage conn = unjust <$> receiveMessageMaybe conn
-  where
-    unjust (Just i ) = i
-    unjust Nothing   = throw $ ConnectionClosed (_connOrigin conn)
-
--- | Block and wait until the 'Connection' receives any message, and
--- attempts to decode it depending on the desired type.  If 'Text' is
--- requested, assumes Utf8-encoded text or just a plain Javascript string.
--- If an instance of 'Binary' is requested, attempts to decode it into that
--- instance.  Successful parses return 'Right x', and failed parses return
--- 'Left SocketMsg' (A sum type between 'SocketMsgText' containing (strict)
--- 'Text' and 'SocketMsgData' containing a (lazy) 'ByteString').
---
--- Returns @Just result@ on the first message received, or @Nothing@ if the
--- 'Connection' closes while waiting.  Returns @Nothing@ if the connection
--- is already closed and there are no queued messages left.
-receiveEitherMaybe :: WSReceivable a => Connection -> IO (Maybe (Either SocketMsg a))
-receiveEitherMaybe = (fmap . fmap) unwrapReceivable . receiveMessageMaybe
-
--- | Block and wait until the 'Connection' receives any message, and
--- attempts to decode it depending on the desired type.  If 'Text' is
--- requested, assumes Utf8-encoded text or just a plain Javascript string.
--- If an instance of 'Binary' is requested, attempts to decode it into that
--- instance.  Successful parses return 'Right x', and failed parses return
--- 'Left SocketMsg' (A sum type between 'SocketMsgText' containing (strict)
--- 'Text' and 'SocketMsgData' containing a (lazy) 'ByteString').
---
--- Will return the message as soon as any is received, or throw
--- a 'ConnectionException' if the connection is closed while waiting.
--- Throws an exception immediately if the connection is already closed and
--- there are no queued messages left.
---
--- To handle closed sockets with 'Maybe', use 'receiveEitherMaybe'.
---
-receiveEither :: WSReceivable a => Connection -> IO (Either SocketMsg a)
-receiveEither = fmap unwrapReceivable . receiveMessage

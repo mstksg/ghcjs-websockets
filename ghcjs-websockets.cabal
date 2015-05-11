@@ -46,9 +46,9 @@ description:
                      > main :: IO ()
                      > main = withUrl "ws://my-server.com" $ \conn ->
                      >     forever $ do
-                     >         t <- receiveText_ conn
+                     >         t <- receiveText conn
                      >         putStrLn (unpack t)
-                     >         sendText_ conn t
+                     >         sendText conn t
                      .
                      > -- A simple client waiting for connections and outputting the running sum
                      > main :: IO ()
@@ -56,7 +56,7 @@ description:
                      >
                      > runningSum :: Int -> Connection -> IO ()
                      > runningSum n conn = do
-                     >     i <- receiveData_ conn
+                     >     i <- receiveData conn
                      >     print (n + i)
                      >     runningSum (n + i) conn
                      .
@@ -66,8 +66,8 @@ description:
                      >     conn1 <- openConnection "ws://server-1.com"
                      >     conn2 <- openConnection "ws://server-2.com"
                      >     forever $ do
-                     >         msg <- receiveMessage_ conn1
-                     >         sendMessage_ conn2 msg
+                     >         msg <- receiveMessage conn1
+                     >         sendMessage conn2 msg
                      >     closeConnection conn2
                      >     closeConnection conn1
 
@@ -84,7 +84,7 @@ cabal-version:       >=1.10
 
 source-repository head
   type:     git
-  location: https://github.com/mstksg/tagged-binary
+  location: https://github.com/mstksg/ghcjs-websockets
 
 library
   exposed-modules:     JavaScript.WebSockets
@@ -93,11 +93,11 @@ library
   -- other-modules:       
   -- other-extensions:    
   ghc-options:         -Wall
-  build-depends:       base >= 4.7 && < 5
-                     , base64-bytestring
-                     , binary
-                     , bytestring
-                     , ghcjs-base
-                     , text
+  build-depends:       base              >= 4.7      && < 5
+                     , base64-bytestring >= 1
+                     , binary            >= 0.7
+                     , bytestring        >= 0.10
+                     , ghcjs-base        >= 0.1
+                     , text              >= 1.2
   hs-source-dirs:      src
   default-language:    Haskell2010

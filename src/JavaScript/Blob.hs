@@ -9,9 +9,10 @@ module JavaScript.Blob (
   , isBlob
   ) where
 
-import Data.ByteString
-import GHCJS.Foreign
-import GHCJS.Types
+import Control.Exception (mask_)
+import Data.ByteString   (ByteString)
+import GHCJS.Foreign     (bufferByteString)
+import GHCJS.Types       (JSRef)
 
 
 data Blob_
@@ -27,7 +28,7 @@ foreign import javascript interruptible  "var reader = new FileReader();\
 foreign import javascript unsafe "$1 instanceof Blob" ffi_blobCheck :: JSRef a -> IO Bool
 
 readBlob :: Blob -> IO ByteString
-readBlob b = bufferByteString 0 0 =<< ffi_readBlob b
+readBlob b = bufferByteString 0 0 =<< mask_ (ffi_readBlob b)
 
 isBlob :: JSRef a -> IO Bool
 isBlob ref = ffi_blobCheck ref
