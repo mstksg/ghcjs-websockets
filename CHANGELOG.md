@@ -1,3 +1,10 @@
+0.3.0.1
+-------
+<https://github.com/mstksg/ghcjs-websockets/releases/tag/v0.3.0.1>
+
+*   Fixed the "other-modules" cabal file field to include non-exported but
+    important modules.
+
 0.3.0.0
 -------
 <https://github.com/mstksg/ghcjs-websockets/releases/tag/v0.3.0.0>
