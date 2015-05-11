@@ -93,7 +93,8 @@ library
   exposed-modules:     JavaScript.WebSockets
                      , JavaScript.WebSockets.Internal
   -- ghcjs-options: -O2
-  -- other-modules:       
+  other-modules:       JavaScript.Blob
+                     , JavaScript.WebSockets.FFI
   -- other-extensions:    
   ghc-options:         -Wall
   build-depends:       base              >= 4.7      && < 5
