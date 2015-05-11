@@ -22,10 +22,13 @@ Most of the necessary functionality is in hopefully in
 `JavaScript.WebSockets`; more of the low-level API is exposed in
 `JavaScript.WebSockets.Internal` if you need it for library construction.
 
+Documenation is [online on github pages][documentation].
+
 [jsapi]: http://www.w3.org/TR/websockets/
 [io-stream]: http://hackage.haskell.org/package/io-streams
 [websockets]: http://hackage.haskell.org/package/websockets
 [binary]: http://hackage.haskell.org/package/binary
+[documenation]: http://mstksg.github.io/ghcjs-websockets/JavaScript-WebSockets.html
 
 Usage
 -----

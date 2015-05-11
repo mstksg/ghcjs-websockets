@@ -2,6 +2,9 @@ name:                ghcjs-websockets
 version:             0.3.0.0
 synopsis:            GHCJS interface for the Javascript Websocket API
 description:
+                     Documentation online at
+                     <http://mstksg.github.io/ghcjs-websockets/JavaScript-WebSockets.html>
+                     .
                      'ghcjs-websockets' aims to provide a clean, idiomatic,
                      efficient, low-level, out-of-your-way, bare bones,
                      concurrency-aware interface with minimal abstractions
