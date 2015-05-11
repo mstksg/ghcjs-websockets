@@ -28,7 +28,7 @@ Documenation is [online on github pages][documentation].
 [io-stream]: http://hackage.haskell.org/package/io-streams
 [websockets]: http://hackage.haskell.org/package/websockets
 [binary]: http://hackage.haskell.org/package/binary
-[documenation]: http://mstksg.github.io/ghcjs-websockets/JavaScript-WebSockets.html
+[documentation]: http://mstksg.github.io/ghcjs-websockets/JavaScript-WebSockets.html
 
 Usage
 -----
