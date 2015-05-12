@@ -438,4 +438,3 @@ receiveEither = fmap unwrapReceivable . receiveMessage
 -- | Returns the origin url of the given 'Connection'.
 connectionOrigin :: Connection -> Text
 connectionOrigin = _connOrigin
-
