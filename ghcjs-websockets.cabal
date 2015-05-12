@@ -1,5 +1,5 @@
 name:                ghcjs-websockets
-version:             0.3.0.1
+version:             0.3.0.2
 synopsis:            GHCJS interface for the Javascript Websocket API
 description:
                      Documentation online at
@@ -82,7 +82,8 @@ maintainer:          Justin Le <justin@jle.im>
 copyright:           Copyright (c) Justin Le 2015
 category:            Web
 build-type:          Simple
--- extra-source-files:  
+extra-source-files:  CHANGELOG.md
+                   , README.md
 cabal-version:       >=1.10
 
 source-repository head
@@ -95,13 +96,13 @@ library
   -- ghcjs-options: -O2
   other-modules:       JavaScript.Blob
                      , JavaScript.WebSockets.FFI
-  -- other-extensions:    
+  -- other-extensions:
   ghc-options:         -Wall
   build-depends:       base              >= 4.7      && < 5
                      , base64-bytestring >= 1
                      , binary            >= 0.7
                      , bytestring        >= 0.10
                      , ghcjs-base        >= 0.1
-                     , text              >= 1.2
+                     , text              >= 1
   hs-source-dirs:      src
   default-language:    Haskell2010
