@@ -82,7 +82,7 @@ maintainer:          Justin Le <justin@jle.im>
 copyright:           Copyright (c) Justin Le 2015
 category:            Web
 build-type:          Simple
--- extra-source-files:  
+-- extra-source-files:
 cabal-version:       >=1.10
 
 source-repository head
@@ -95,7 +95,7 @@ library
   -- ghcjs-options: -O2
   other-modules:       JavaScript.Blob
                      , JavaScript.WebSockets.FFI
-  -- other-extensions:    
+  -- other-extensions:
   ghc-options:         -Wall
   build-depends:       base              >= 4.7      && < 5
                      , base64-bytestring >= 1
