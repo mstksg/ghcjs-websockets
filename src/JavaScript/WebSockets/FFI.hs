@@ -23,7 +23,12 @@ module JavaScript.WebSockets.FFI (
   ) where
 
 import Data.Text   (Text)
+
+#ifdef ghcjs_HOST_OS
 import GHCJS.Types (JSRef, JSArray, JSString, JSObject, JSBool)
+#else
+import JavaScript.NoGHCJS
+#endif
 
 data Socket_
 type Socket = JSRef Socket_
@@ -38,6 +43,7 @@ type ConnectionWaiters = JSArray Waiter
 
 type WSCloseEvent = JSObject ()
 
+#ifdef ghcjs_HOST_OS
 foreign import javascript unsafe "$1.close();"
   ws_closeSocket :: Socket -> IO ()
 
@@ -99,3 +105,26 @@ foreign import javascript interruptible  "$1.onclose = function (e) { $c(e); };"
 
 foreign import javascript unsafe "$1.readyState"
   ws_readyState :: Socket -> IO Int
+#else
+
+ws_closeSocket :: Socket -> IO ()
+ws_socketSend :: Socket -> JSString -> IO ()
+ws_handleOpen :: Socket -> IO Socket
+ws_newSocket :: JSString -> ConnectionQueue -> ConnectionWaiters -> IO Socket
+ws_awaitConn :: ConnectionQueue -> ConnectionWaiters -> WaiterKilled -> IO (JSRef ())
+ws_clearWaiters :: ConnectionWaiters -> IO ()
+ws_clearQueue :: ConnectionQueue -> IO ()
+ws_handleClose :: Socket -> IO WSCloseEvent
+ws_readyState :: Socket -> IO Int
+
+ws_closeSocket = error "ws_closeSocket: only available in JavaScript"
+ws_socketSend = error "ws_socketSend: only available in JavaScript"
+ws_handleOpen = error "ws_handleOpen: only available in JavaScript"
+ws_newSocket = error "ws_newSocket: only available in JavaScript"
+ws_awaitConn = error "ws_awaitConn: only available in JavaScript"
+ws_clearWaiters = error "ws_clearWaiters: only available in JavaScript"
+ws_clearQueue = error "ws_clearQueue: only available in JavaScript"
+ws_handleClose = error "ws_handleClose: only available in JavaScript"
+ws_readyState = error "ws_readyState: only available in JavaScript"
+
+#endif

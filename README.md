@@ -138,6 +138,14 @@ These will normally be deleted; however, you can use
 `closeConnectionLeftovers` or `withUrlLeftovers` to grab a list of the raw
 `SocketMsg`s remaining after closing.
 
+### Issues and Roadmap
+
+As of now, there are still some exceptions that might be thrown by the
+Javascript websockets API that are not explicitly handled by the library.  For
+the most part, things are usable and asynchronous exceptions (in Haskell)
+should all be handled well at this point.  There are also some small aspects
+of the websockets API that aren't yet accessible through the library.
+
 ### Copyright
 
 Copyright (c) Justin Le 2015
