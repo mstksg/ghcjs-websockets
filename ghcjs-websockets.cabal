@@ -82,7 +82,8 @@ maintainer:          Justin Le <justin@jle.im>
 copyright:           Copyright (c) Justin Le 2015
 category:            Web
 build-type:          Simple
--- extra-source-files:  
+extra-source-files:  CHANGELOG.md
+                   , README.md
 cabal-version:       >=1.10
 
 source-repository head
