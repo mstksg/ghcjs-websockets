@@ -1,3 +1,11 @@
+0.3.0.2
+-------
+<https://github.com/mstksg/ghcjs-websockets/releases/tag/v0.3.0.2>
+
+*   Lowered bounds on *text* dependency.
+*   Added `CHANGELOG.md` and `README.md` to extra source dependecy fields, to
+    count them in the cabal package.
+
 0.3.0.1
 -------
 <https://github.com/mstksg/ghcjs-websockets/releases/tag/v0.3.0.1>
