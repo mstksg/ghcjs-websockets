@@ -42,7 +42,6 @@ module JavaScript.WebSockets (
   , connectionCloseReason
   , connectionOrigin
   -- * Sending data
-  -- $sending
   , sendData
   , sendData_
   , sendText
@@ -52,7 +51,6 @@ module JavaScript.WebSockets (
   , send
   , send_
   -- * Receiving data
-  -- $receiving
   , receive
   , receiveMaybe
   , receiveText

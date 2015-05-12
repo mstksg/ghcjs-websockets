@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE IncoherentInstances #-}
@@ -27,6 +28,7 @@ module JavaScript.WebSockets.Internal (
     Connection(..)
   , SocketMsg(..)
   , ConnClosing(..)
+  , Socket
   -- ** Typeclasses
   , WSSendable(..)
   , WSReceivable(..)
@@ -61,9 +63,6 @@ import Data.Text as T            (Text, unpack, append)
 import Data.Text.Encoding        (decodeUtf8', encodeUtf8, decodeUtf8)
 import Data.Traversable          (mapM)
 import Data.Typeable             (Typeable)
-import GHCJS.Foreign
-import GHCJS.Marshal             (fromJSRef)
-import GHCJS.Types               (JSRef, JSString, isNull)
 import JavaScript.Blob           (Blob, isBlob, readBlob)
 import JavaScript.WebSockets.FFI
 import Prelude hiding            (mapM)
@@ -71,6 +70,16 @@ import Unsafe.Coerce             (unsafeCoerce)
 
 import qualified Data.ByteString.Base64      as B64
 import qualified Data.ByteString.Base64.Lazy as B64L
+
+#ifdef ghcjs_HOST_OS
+import GHCJS.Foreign             (jsTrue, setProp, newObj, toJSString
+                                , fromArray, getPropMaybe, fromJSBool
+                                , newArray, jsNull, fromJSString )
+import GHCJS.Marshal             (fromJSRef)
+import GHCJS.Types               (JSRef, JSString, isNull)
+#else
+import JavaScript.NoGHCJS
+#endif
 
 -- | Encapsulates a (reference to a) Javascript Websocket connection.  Can
 -- be created/accessed with either 'openConnection' or (preferably)
