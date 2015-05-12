@@ -395,4 +395,3 @@ _loadJSMessage msg | isNull msg = return Nothing
       else do
         let blob = unsafeCoerce msg :: JSString
         return . Just . SocketMsgText . fromJSString $ blob
-

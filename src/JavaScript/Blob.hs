@@ -32,6 +32,3 @@ readBlob b = bufferByteString 0 0 =<< mask_ (ffi_readBlob b)
 
 isBlob :: JSRef a -> IO Bool
 isBlob ref = ffi_blobCheck ref
-
-
-
