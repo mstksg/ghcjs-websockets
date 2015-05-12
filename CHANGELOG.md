@@ -2,8 +2,8 @@
 -------
 <https://github.com/mstksg/ghcjs-websockets/releases/tag/v0.3.0.3>
 
-*   Added CPP an cabal file flags necessary to enable building on ghc, for
-    hackage and usage with hybrid projects.
+*   Added CPP an cabal file flags necessary to enable building on (normal)
+    GHC, for hackage and usage with hybrid projects.
 
 0.3.0.2
 -------

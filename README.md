@@ -4,7 +4,7 @@ ghcjs-websockets
 *ghcjs-websockets* aims to provide a clean, idiomatic, efficient, low-level,
 out-of-your-way, bare bones, concurrency-aware interface with minimal
 abstractions over the [Javascript Websockets API][jsapi], inspired by common
-Haskell idioms found in libraries like [io-stream][] and the server-side
+Haskell idioms found in libraries like [io-streams][] and the server-side
 [websockets][] library, targeting compilation to Javascript with `ghcjs`.
 
 The interface abstracts websockets as simple IO/file handles, with additional
@@ -25,7 +25,7 @@ Most of the necessary functionality is in hopefully in
 Documenation is [online on github pages][documentation].
 
 [jsapi]: http://www.w3.org/TR/websockets/
-[io-stream]: http://hackage.haskell.org/package/io-streams
+[io-streams]: http://hackage.haskell.org/package/io-streams
 [websockets]: http://hackage.haskell.org/package/websockets
 [binary]: http://hackage.haskell.org/package/binary
 [documentation]: http://mstksg.github.io/ghcjs-websockets/JavaScript-WebSockets.html
