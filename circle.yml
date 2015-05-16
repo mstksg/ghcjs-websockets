@@ -1,0 +1,7 @@
+machine:
+  ghc:
+    version: 7.8.3
+
+notify:
+  webhooks:
+    - url: https://webhooks.gitter.im/e/01912a30611c1851708d
