@@ -274,7 +274,7 @@ closeConnection = void . _closeConnection ManualClose False
 _closeConnection :: ConnClosing -> Bool -> Connection -> IO [SocketMsg]
 _closeConnection cclsing dump conn = withConnBlockMasked conn $ do
     closed <- isJust <$> readIORef (_connClosed conn)
-    connState <- connectionStateCode conn
+    connState <- _connectionStateCode conn
     if closed || connState < 3
       then
         return []
@@ -349,7 +349,10 @@ connectionCloseReason conn = withConnBlock conn $
 -- haskelley sum type.
 connectionStateCode :: Connection -> IO Int
 connectionStateCode conn = withConnBlock conn $
-    ws_readyState (_connSocket conn)
+    _connectionStateCode conn
+    
+_connectionStateCode :: Connection -> IO Int
+_connectionStateCode conn = ws_readyState (_connSocket conn)    
 
 -- | Sends the given 'SocketMsg' through the given 'Connection'.
 -- A 'SocketMsg' is a sum type of either 'SocketMsgText t', containing
