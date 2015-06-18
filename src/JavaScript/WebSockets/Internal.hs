@@ -350,9 +350,9 @@ connectionCloseReason conn = withConnBlock conn $
 connectionStateCode :: Connection -> IO Int
 connectionStateCode conn = withConnBlock conn $
     _connectionStateCode conn
-    
+
 _connectionStateCode :: Connection -> IO Int
-_connectionStateCode conn = ws_readyState (_connSocket conn)    
+_connectionStateCode conn = ws_readyState (_connSocket conn)
 
 -- | Sends the given 'SocketMsg' through the given 'Connection'.
 -- A 'SocketMsg' is a sum type of either 'SocketMsgText t', containing
