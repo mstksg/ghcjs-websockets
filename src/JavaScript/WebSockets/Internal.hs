@@ -210,7 +210,7 @@ openConnectionImmediate url = do
     block   <- newMVar ()
     let conn = Connection socket queue waiters url closed block
     outp    <- newEmptyMVar
-    _       <- forkIO $ handleClose conn
+    _       <- forkIO $ handleClose conn outp
     -- TODO: Opening errors
     _       <- forkIO $ handleOpen conn outp
     return outp
@@ -231,8 +231,8 @@ handleOpen conn connMVar =
                       _ <- ws_handleOpen (_connSocket conn)
                       putMVar connMVar conn
 
-handleClose :: Connection -> IO ()
-handleClose conn = do
+handleClose :: Connection -> MVar Connection -> IO ()
+handleClose conn connMVar = do
     connState <- connectionStateCode conn
     when (connState < 3) . handle handler $ do
       closeEvent <- ws_handleClose (_connSocket conn)
@@ -241,6 +241,7 @@ handleClose conn = do
       reason     <- fmap fromJSString <$> getPropMaybe ("reason" :: Text) closeEvent
       let jsClose = JSClose wasClean code reason
       _ <- _closeConnection jsClose False conn
+      _ <- tryPutMVar connMVar conn
       return ()
   where
     -- TODO: any way to reasonably restore the handler?
