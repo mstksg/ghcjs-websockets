@@ -1,5 +1,5 @@
 name:                ghcjs-websockets
-version:             0.3.0.4
+version:             0.3.0.5
 synopsis:            GHCJS interface for the Javascript Websocket API
 description:
                      Documentation online at

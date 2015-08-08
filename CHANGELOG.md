@@ -1,3 +1,10 @@
+0.3.0.5
+-------
+<https://github.com/mstksg/ghcjs-websockets/releases/tag/v0.3.0.5>
+
+*   Fixing `withURL` blocking when there is a javascript error on connection.
+    (Thanks to sztupi)
+
 0.3.0.4
 -------
 <https://github.com/mstksg/ghcjs-websockets/releases/tag/v0.3.0.4>
