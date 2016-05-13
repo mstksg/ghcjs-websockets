@@ -1,6 +1,8 @@
 ghcjs-websockets
 ================
 
+**DEPRECATED!!** Use ghcjs-base's native websockets!
+
 [![Join the chat at https://gitter.im/mstksg/ghcjs-websockets](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/mstksg/ghcjs-websockets?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
 *ghcjs-websockets* aims to provide a clean, idiomatic, efficient, low-level,
